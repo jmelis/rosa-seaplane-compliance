@@ -1,6 +1,7 @@
 title: ROSA Seaplane Change Management Controls -> NIST SP 800-53
-# Schema: #MappingDocument. Control IDs are from KSI-CMT-VTD/LMC's `controls`
-# arrays (FedRAMP dataset 2026.10.13.01); not consumed by complyctl.
+# Schema: #MappingDocument. Control IDs and casing match
+# mappings/vendor/fedramp/layer1-fedramp-sp80053.yaml (fedramp-sp800-53-guidance
+# v5.2.0) exactly, e.g. "CM-03", "CM-03 (01)"; not consumed by complyctl.
 metadata:
   id: RSC.CMT.MAP.NIST
   type: MappingDocument
@@ -16,16 +17,16 @@ metadata:
       title: ROSA Seaplane Change Management Control Catalog
       version: "0.1.0"
       url: https://github.com/openshift-online/rosa-seaplane-compliance/blob/main/gemara/change-management/controls.yaml
-    - id: NIST-800-53
-      title: NIST SP 800-53 Rev5 (as referenced by FedRAMP KSI-CMT)
-      version: "Rev5"
-      url: https://csrc.nist.gov/projects/risk-management/sp800-53-controls
+    - id: fedramp-sp800-53-guidance
+      title: "NIST SP 800-53 Rev 5 — FedRAMP KSI-Referenced Controls"
+      version: "5.2.0"
+      url: mappings/vendor/fedramp/layer1-fedramp-sp80053.yaml
 
 source-reference:
   reference-id: RSC.CMT.CTRL
   entry-type: AssessmentRequirement
 target-reference:
-  reference-id: NIST-800-53
+  reference-id: fedramp-sp800-53-guidance
   entry-type: Control
 
 mappings:
@@ -33,13 +34,13 @@ mappings:
     source: RSC.CMT.CTRL01.AR01
     relationship: supports
     targets:
-      - entry-id: cm-3
+      - entry-id: "CM-03"
         strength: 5
         rationale: Enforces configuration change control on the default branch.
-      - entry-id: cm-3.2
+      - entry-id: "CM-03 (02)"
         strength: 7
         rationale: Required status checks before merge = testing/validation of changes.
-      - entry-id: cm-5
+      - entry-id: "CM-05"
         strength: 6
         rationale: Branch protection restricts who may push or merge.
 
@@ -47,9 +48,9 @@ mappings:
     source: RSC.CMT.CTRL01.AR02
     relationship: supports
     targets:
-      - entry-id: au-2
+      - entry-id: "AU-02"
         strength: 6
         rationale: The merge/PR history is the logged, auditable change-event record.
-      - entry-id: cm-3.1
+      - entry-id: "CM-03 (01)"
         strength: 5
         rationale: Automated record of configuration changes via merge history.

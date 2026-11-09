@@ -96,6 +96,10 @@ repo's job is the RTM and running the evaluation, not long-term storage.
   certification-independent (`change-management` is an example domain).
 - `mappings/*.mapping.yaml` one MappingDocument per certification (KSI, NIST 800-53).
 - `mappings/*.baseline.yaml` the required set per certification, read by `coverage.py`.
+- `mappings/vendor/fedramp/` unmodified copies of the FedRAMP Gemara layer
+  files (NIST 800-53 guidance catalog, KSI control catalog, Class C policy)
+  that the mapping/baseline IDs and required-sets above are checked against.
+  Reference only — nothing in `scripts/` or `opa/` reads them directly.
 - `opa/<domain>/policy/*.rego` the Rego checks for `opa`-evaluated ARs (e.g. `github_default_branch_merge_review.rego` for `RSC.CMT.CTRL01.AR02`), authored per domain but published together as one project bundle.
 - `evidence/<AR-FQDN>.*` one executable collector per AR, named by its AR FQDN (e.g. `RSC.CMT.CTRL01.AR01.sh`), pulling that AR's raw evidence (GitHub via `gh api` today). The entrypoint runs every executable here.
 - `scripts/` `generate_rtm.py`, `coverage.py`, and the `publish-*.sh` helpers.
@@ -104,9 +108,10 @@ repo's job is the RTM and running the evaluation, not long-term storage.
 
 ## Known gaps
 
-- Baselines (`mappings/*.baseline.yaml`) are stubs holding only the currently
-  mapped IDs; populate them with the full Class C required sets from the FedRAMP
-  rules dataset before trusting the coverage numbers.
+- Only 2 of 46 required KSIs and 5 of 302 required NIST 800-53 controls are
+  currently covered by a mapping (see `make coverage`) — `gemara/change-management`
+  is still the only control domain; the baselines now reflect the full Class C
+  required sets, so the gap is real work, not a stub.
 - `builtin:github/branch-rules.yaml`'s exact checks vs. `RSC.CMT.CTRL01.AR01`'s wording: unverified.
 - `RSC.CMT.CTRL01.AR02` does not detect admin-bypass merges (needs the org audit log API).
 - Containerfile tool versions are mostly `@latest`; pin before relying on this for real evidence.

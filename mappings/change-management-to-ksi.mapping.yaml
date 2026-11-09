@@ -1,7 +1,8 @@
 title: ROSA Seaplane Change Management Controls -> FedRAMP KSI
 # Schema: #MappingDocument. Not consumed by complyctl, used by
-# scripts/generate_rtm.py and scripts/coverage.py. KSI values from github.com/FedRAMP/rules dataset
-# 2026.10.13.01; re-verify if that's moved on.
+# scripts/generate_rtm.py and scripts/coverage.py. KSI ids/version match
+# mappings/vendor/fedramp/layer2-fedramp-ksi.yaml (fedramp-ksi-controls
+# v2026.1.0); re-sync from there if it moves on.
 metadata:
   id: RSC.CMT.MAP.KSI
   type: MappingDocument
@@ -17,17 +18,17 @@ metadata:
       title: ROSA Seaplane Change Management Control Catalog
       version: "0.1.0"
       url: https://github.com/openshift-online/rosa-seaplane-compliance/blob/main/gemara/change-management/controls.yaml
-    - id: FEDRAMP-KSI
-      title: "FedRAMP Consolidated Rules: Key Security Indicators"
-      version: "2026.10.13.01"
-      url: https://github.com/FedRAMP/rules
+    - id: fedramp-ksi-controls
+      title: "FedRAMP 2026 Key Security Indicators — Class C Controls"
+      version: "2026.1.0"
+      url: mappings/vendor/fedramp/layer2-fedramp-ksi.yaml
 
 source-reference:
   reference-id: RSC.CMT.CTRL
   entry-type: AssessmentRequirement
 target-reference:
-  reference-id: FEDRAMP-KSI
-  entry-type: Statement # closest Gemara EntryType for a KSI indicator
+  reference-id: fedramp-ksi-controls
+  entry-type: Control # layer2-fedramp-ksi.yaml's `controls` entries
 
 mappings:
   - id: RSC.CMT.MAP.KSI.M01
