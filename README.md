@@ -76,25 +76,113 @@ registry). By default nothing here touches anything public or real: the
 OCI registry and S3 bucket below are local-only (see `Makefile`'s `REGISTRY`
 and `docs/credentials.md`).
 
-`make run-local` installs providers to `~/.local/share/complytime/providers`
-(Linux XDG default). On macOS, complyctl looks in
-`~/Library/Application Support/complytime` instead unless `$XDG_DATA_HOME` is
-set — export `XDG_DATA_HOME=$HOME/.local/share` for local macOS runs so
-`complyctl doctor`/`scan` find the installed providers.
+Once everything below is installed once, the steady-state loop is just:
 
 ```bash
 make validate                  # optional: cue vet the Gemara YAML against upstream schema
-podman run -d --name local-oci-registry -p 5050:5000 docker.io/library/registry:2
 make publish-policy            # push L2 controls + L3 policy as an OCI bundle
 make publish-opa-bundle        # push all domains' Rego as one project bundle (opa evaluator)
 export GITHUB_TOKEN=ghp_...
 make run-local                 # collect evidence, then complyctl scan (the L4 run)
                                #   (or: make build-image && make run-image)
-export RSC_S3_BUCKET=...
+export RSC_S3_BUCKET=... RSC_S3_ENDPOINT_URL=...
 make push-evidence              # push evidence/output/ + .complytime/scan/ to the evidence locker
 make rtm-ksi                   # the auditor-facing RTM (CSV)
 make coverage                  # the team's KSI + 800-53 coverage view
 ```
+
+### From scratch: one full local run, step by step
+
+Everything below is verified end to end against the real
+`openshift-online/rosa-seaplane` repo, pushing to a local OCI registry and a
+local S3-compatible bucket — nothing public or real AWS required.
+
+**1. Prerequisites:** `go` (1.23+), `podman` (or `docker`), `python3`+`pip3`,
+`aws` CLI, `gh` CLI, `jq`.
+
+```bash
+pip3 install -r requirements.txt
+```
+
+**2. Install complyctl, ampel, and most of the toolchain** (unpinned
+`@latest` here; pin before relying on this for real evidence — see
+`containers/complyctl/Containerfile` for pinned versions):
+
+```bash
+go install github.com/complytime/complyctl/cmd/complyctl@latest
+go install github.com/complytime/complytime-providers/cmd/ampel-provider@latest
+go install github.com/carabiner-dev/snappy@v0.2.4
+go install github.com/policylabs/ampel/cmd/ampel@v1.4.2  # moved from carabiner-dev/ampel at v1.5.0; >=1.4.2 required
+go install github.com/open-policy-agent/conftest@v0.68.2
+go install oras.land/oras/cmd/oras@latest
+```
+
+**3. Build `opa-provider` from a patched checkout** — the stock release has
+two bugs this project's two-evaluator-per-policy setup hits (see
+`patches/README.md`):
+
+```bash
+git clone https://github.com/complytime/complytime-providers.git /tmp/complytime-providers
+cd /tmp/complytime-providers
+git apply /path/to/rosa-seaplane-compliance/patches/opa-provider-local-dev-and-multi-target.patch
+go build -o "$(go env GOPATH)/bin/opa-provider" ./cmd/opa-provider
+cd /path/to/rosa-seaplane-compliance
+```
+
+**4. Install both providers where complyctl looks for them:**
+
+```bash
+mkdir -p "$HOME/.local/share/complytime/providers"
+cp "$(go env GOPATH)/bin/ampel-provider" "$HOME/.local/share/complytime/providers/complyctl-provider-ampel"
+cp "$(go env GOPATH)/bin/opa-provider" "$HOME/.local/share/complytime/providers/complyctl-provider-opa"
+chmod +x "$HOME/.local/share/complytime/providers/complyctl-provider-ampel" \
+         "$HOME/.local/share/complytime/providers/complyctl-provider-opa"
+# macOS only: complyctl looks in ~/Library/Application Support/complytime by
+# default; this repo's config assumes the Linux XDG path above instead.
+export XDG_DATA_HOME="$HOME/.local/share"
+```
+
+**5. Start the local OCI registry and S3-compatible bucket:**
+
+```bash
+podman run -d --name local-oci-registry -p 5050:5000 docker.io/library/registry:2
+podman run -d --name local-s3 -p 9090:9090 docker.io/adobe/s3mock:latest
+export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1
+aws --endpoint-url http://localhost:9090 s3 mb s3://rosa-seaplane-evidence
+```
+
+**6. Set a scoped `GITHUB_TOKEN`** (see `docs/credentials.md` for how to mint
+a token scoped to just this; don't reuse a broad personal token):
+
+```bash
+export GITHUB_TOKEN=github_pat_xxxxxxxx
+```
+
+**7. Publish the bundles to the local registry, then run the full pipeline:**
+
+```bash
+make publish-policy
+make publish-opa-bundle
+make run-local
+```
+
+This collects real evidence from `openshift-online/rosa-seaplane`, runs
+`complyctl scan`, and writes OSCAL/SARIF/Markdown reports to
+`.complytime/scan/`. Expect both `RSC.CMT.CTRL01.AR01` and `AR02` to report
+`❌ Failed` — those are real findings against the real repo, not broken
+tooling (see `make run-local`'s output for the exact reasons).
+
+**8. Push the run to the evidence locker and verify it landed:**
+
+```bash
+export RSC_S3_BUCKET=rosa-seaplane-evidence RSC_S3_ENDPOINT_URL=http://localhost:9090
+make push-evidence
+aws --endpoint-url http://localhost:9090 s3 ls --recursive s3://rosa-seaplane-evidence/
+```
+
+You should see the raw `evidence/output/` JSON and every `.complytime/scan/`
+artifact (evaluation logs, OSCAL assessment results, SARIF, Markdown) under
+a timestamped prefix.
 
 ## Where evidence goes
 
