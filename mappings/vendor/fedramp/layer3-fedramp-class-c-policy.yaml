@@ -1,0 +1,578 @@
+title: "FedRAMP 2026 — Class C Certification Policy"
+metadata:
+  id: fedramp-class-c-policy
+  type: Policy
+  gemara-version: "1.0.0"
+  version: "2026.1.0"
+  date: "2026-06-24T00:00:00Z"
+  description: >
+    FedRAMP Consolidated Rules for 2026 — Class C certification policy.
+    Defines scope, imported controls, risk posture, and adherence requirements
+    for cloud service providers seeking FedRAMP 20x Class C certification.
+  author:
+    id: fedramp-pmo
+    name: "FedRAMP PMO"
+    type: Human
+    description: "Federal Risk and Authorization Management Program"
+  draft: false
+  mapping-references:
+    - id: fedramp-ksi-controls
+      title: "FedRAMP 2026 Key Security Indicators — Class C Controls"
+      version: "2026.1.0"
+      description: "46 KSI controls with SP 800-53 assessment requirements"
+    - id: fedramp-sp800-53-guidance
+      title: "NIST SP 800-53 Rev 5 — FedRAMP KSI-Referenced Controls"
+      version: "5.2.0"
+      description: "302 SP 800-53 guidelines serving as guidance foundation for KSIs"
+
+contacts:
+  responsible:
+    - name: "Cloud Service Provider Security Team"
+      affiliation: "Provider Organization"
+  accountable:
+    - name: "Cloud Service Provider Authorizing Official"
+      affiliation: "Provider Organization"
+  consulted:
+    - name: "FedRAMP PMO"
+      affiliation: "General Services Administration"
+    - name: "Independent Assessor"
+      affiliation: "3PAO"
+  informed:
+    - name: "Federal Agency Customers"
+      affiliation: "Subscribing Agencies"
+
+scope:
+  in:
+    technologies:
+      - "Cloud Service Offerings (IaaS, PaaS, SaaS)"
+      - "Cloud-hosted applications processing federal information"
+    sensitivity:
+      - "Federal Information — Moderate Impact (FIPS 199)"
+      - "Controlled Unclassified Information (CUI)"
+    users:
+      - "Cloud Service Providers"
+      - "Federal Agency Customers"
+      - "Provider Operations and Engineering Staff"
+  out:
+    technologies:
+      - "Single-agency systems hosted on cloud infrastructure"
+      - "Social media and communications platforms"
+      - "Search engines"
+      - "Ancillary services posing negligible risk to federal information"
+    users:
+      - "Anonymous public users accessing non-federal content"
+
+imports:
+  catalogs:
+    - reference-id: fedramp-ksi-controls
+      constraints:
+        - id: CON-CLASS-C-ALL-KSI
+          target-id: "*"
+          text: >
+            Class C certification requires persistent demonstration of all 46 Key Security
+            Indicators. Five KSIs (CNA-EIS, MLA-ALA, SVC-PRR, SVC-RUD, SVC-VCM) that are
+            optional at Class B are mandatory at Class C.
+        - id: CON-CLASS-C-PERSIST
+          target-id: "*"
+          text: >
+            All controls MUST be persistently demonstrated through automation and continuous
+            monitoring. Persistent means the security outcome is actively maintained and
+            regularly verified, not just implemented once.
+        - id: CON-CLASS-C-SDR
+          target-id: "*"
+          text: >
+            Providers MUST maintain a Security Decision Record (SDR) documenting how each
+            KSI is addressed, including 30-day summaries, up to one year of historical
+            summaries, and daily data up to one year where available.
+  guidance:
+    - reference-id: fedramp-sp800-53-guidance
+
+risks:
+  mitigated:
+    - id: MIT-DATA-BREACH
+      risk:
+        reference-id: fedramp-ksi-controls
+        entry-id: "KSI-IAM-MFA"
+    - id: MIT-UNAUTHORIZED-ACCESS
+      risk:
+        reference-id: fedramp-ksi-controls
+        entry-id: "KSI-IAM-PRA"
+    - id: MIT-CONFIG-DRIFT
+      risk:
+        reference-id: fedramp-ksi-controls
+        entry-id: "KSI-SVC-VCM"
+    - id: MIT-INCIDENT-UNDETECTED
+      risk:
+        reference-id: fedramp-ksi-controls
+        entry-id: "KSI-INR-IRP"
+    - id: MIT-SUPPLY-CHAIN
+      risk:
+        reference-id: fedramp-ksi-controls
+        entry-id: "KSI-SCR-TPM"
+
+adherence:
+  evaluation-methods:
+    - id: EVAL-PERSISTENT-AUTOMATED
+      type: Behavioral
+      mode: Automated
+      required: true
+      description: >
+        Persistent automated monitoring and validation of KSI outcomes
+        through continuous security assessment tooling.
+    - id: EVAL-SDR-REVIEW
+      type: Intent
+      mode: Manual
+      required: true
+      description: >
+        Manual review of Security Decision Records documenting how each
+        KSI is addressed with historical metrics and evidence.
+    - id: EVAL-3PAO-ASSESSMENT
+      type: Behavioral
+      mode: Manual
+      required: true
+      description: >
+        Independent assessment by a FedRAMP-recognized Third Party
+        Assessment Organization (3PAO) validating KSI implementation.
+  assessment-plans:
+    - id: AP-CED-RAT
+      requirement-id: "KSI-CED-RAT-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-CED-RAT (Reviewing All Training)"
+    - id: AP-CMT-LMC
+      requirement-id: "KSI-CMT-LMC-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-CMT-LMC (Logging Changes)"
+    - id: AP-CMT-RMV
+      requirement-id: "KSI-CMT-RMV-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-CMT-RMV (Redeploying vs Modifying)"
+    - id: AP-CMT-RVP
+      requirement-id: "KSI-CMT-RVP-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-CMT-RVP (Reviewing Change Procedures)"
+    - id: AP-CMT-VTD
+      requirement-id: "KSI-CMT-VTD-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-CMT-VTD (Validating Throughout Deployment)"
+    - id: AP-CNA-DFP
+      requirement-id: "KSI-CNA-DFP-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-CNA-DFP (Defining Functionality and Privileges)"
+    - id: AP-CNA-EIS
+      requirement-id: "KSI-CNA-EIS-AR1"
+      frequency: "Persistent (automated) with quarterly manual review — Class C required"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-CNA-EIS (Enforcing Intended State)"
+    - id: AP-CNA-IBP
+      requirement-id: "KSI-CNA-IBP-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-CNA-IBP (Implementing Best Practices)"
+    - id: AP-CNA-MAT
+      requirement-id: "KSI-CNA-MAT-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-CNA-MAT (Minimizing Attack Surface)"
+    - id: AP-CNA-OFA
+      requirement-id: "KSI-CNA-OFA-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-CNA-OFA (Optimizing for Availability)"
+    - id: AP-CNA-RNT
+      requirement-id: "KSI-CNA-RNT-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-CNA-RNT (Restricting Network Traffic)"
+    - id: AP-CNA-RVP
+      requirement-id: "KSI-CNA-RVP-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-CNA-RVP (Reviewing Protections)"
+    - id: AP-CNA-ULN
+      requirement-id: "KSI-CNA-ULN-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-CNA-ULN (Using Logical Networking)"
+    - id: AP-IAM-AAM
+      requirement-id: "KSI-IAM-AAM-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-IAM-AAM (Automating Account Management)"
+    - id: AP-IAM-APM
+      requirement-id: "KSI-IAM-APM-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-IAM-APM (Adopting Passwordless Methods)"
+    - id: AP-IAM-ELP
+      requirement-id: "KSI-IAM-ELP-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-IAM-ELP (Ensuring Least Privilege)"
+    - id: AP-IAM-JIT
+      requirement-id: "KSI-IAM-JIT-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-IAM-JIT (Authorizing Just-in-Time)"
+    - id: AP-IAM-SNU
+      requirement-id: "KSI-IAM-SNU-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-IAM-SNU (Securing Non-User Authentication)"
+    - id: AP-IAM-SUS
+      requirement-id: "KSI-IAM-SUS-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-IAM-SUS (Responding to Suspicious Activity)"
+    - id: AP-INR-AAR
+      requirement-id: "KSI-INR-AAR-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-INR-AAR (Generating After Action Reports)"
+    - id: AP-INR-RIR
+      requirement-id: "KSI-INR-RIR-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-INR-RIR (Reviewing Incident Response Procedures)"
+    - id: AP-INR-RPI
+      requirement-id: "KSI-INR-RPI-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-INR-RPI (Reviewing Past Incidents)"
+    - id: AP-MLA-ALA
+      requirement-id: "KSI-MLA-ALA-AR1"
+      frequency: "Persistent (automated) with quarterly manual review — Class C required"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-MLA-ALA (Authorizing Log Access)"
+    - id: AP-MLA-EVC
+      requirement-id: "KSI-MLA-EVC-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-MLA-EVC (Evaluating Configurations)"
+    - id: AP-MLA-LET
+      requirement-id: "KSI-MLA-LET-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-MLA-LET (Logging Event Types)"
+    - id: AP-MLA-OSM
+      requirement-id: "KSI-MLA-OSM-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-MLA-OSM (Operating SIEM Capability)"
+    - id: AP-MLA-RVL
+      requirement-id: "KSI-MLA-RVL-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-MLA-RVL (Reviewing Logs)"
+    - id: AP-PIY-GIV
+      requirement-id: "KSI-PIY-GIV-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-PIY-GIV (Generating Inventories)"
+    - id: AP-PIY-RES
+      requirement-id: "KSI-PIY-RES-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-PIY-RES (Reviewing Executive Support)"
+    - id: AP-PIY-RIS
+      requirement-id: "KSI-PIY-RIS-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-PIY-RIS (Reviewing Investments in Security)"
+    - id: AP-PIY-RSD
+      requirement-id: "KSI-PIY-RSD-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-PIY-RSD (Reviewing Security in the SDLC)"
+    - id: AP-PIY-RVD
+      requirement-id: "KSI-PIY-RVD-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-PIY-RVD (Reviewing Vulnerability Disclosures)"
+    - id: AP-RPL-ABO
+      requirement-id: "KSI-RPL-ABO-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-RPL-ABO (Aligning Backups with Objectives)"
+    - id: AP-RPL-ARP
+      requirement-id: "KSI-RPL-ARP-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-RPL-ARP (Aligning Recovery Plan)"
+    - id: AP-RPL-RRO
+      requirement-id: "KSI-RPL-RRO-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-RPL-RRO (Reviewing Recovery Objectives)"
+    - id: AP-RPL-TRC
+      requirement-id: "KSI-RPL-TRC-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-RPL-TRC (Testing Recovery Capabilities)"
+    - id: AP-SCR-MIT
+      requirement-id: "KSI-SCR-MIT-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-SCR-MIT (Mitigating Supply Chain Risk)"
+    - id: AP-SCR-MON
+      requirement-id: "KSI-SCR-MON-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-SCR-MON (Monitoring Supply Chain Risk)"
+    - id: AP-SVC-ACM
+      requirement-id: "KSI-SVC-ACM-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-SVC-ACM (Automating Configuration Management)"
+    - id: AP-SVC-ASM
+      requirement-id: "KSI-SVC-ASM-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-SVC-ASM (Automating Secret Management)"
+    - id: AP-SVC-EIS
+      requirement-id: "KSI-SVC-EIS-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-SVC-EIS (Evaluating and Improving Security)"
+    - id: AP-SVC-PRR
+      requirement-id: "KSI-SVC-PRR-AR1"
+      frequency: "Persistent (automated) with quarterly manual review — Class C required"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-SVC-PRR (Preventing Residual Risk)"
+    - id: AP-SVC-RUD
+      requirement-id: "KSI-SVC-RUD-AR1"
+      frequency: "Persistent (automated) with quarterly manual review — Class C required"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-SVC-RUD (Removing Unwanted Data)"
+    - id: AP-SVC-SIN
+      requirement-id: "KSI-SVC-SIN-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-SVC-SIN (Securing Information)"
+    - id: AP-SVC-VCM
+      requirement-id: "KSI-SVC-VCM-AR1"
+      frequency: "Persistent (automated) with quarterly manual review — Class C required"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-SVC-VCM (Validating Communications)"
+    - id: AP-SVC-VRI
+      requirement-id: "KSI-SVC-VRI-AR1"
+      frequency: "Persistent (automated) with quarterly manual review"
+      evaluation-methods:
+        - id: EVAL-PERSISTENT-AUTOMATED
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: "Automated validation of KSI-SVC-VRI (Validating Resource Integrity)"
+  enforcement-methods:
+    - id: ENF-QUARTERLY-REVIEW
+      type: Gate
+      mode: Manual
+      required: true
+      description: >
+        Quarterly review by FedRAMP PMO to verify persistent KSI
+        demonstration and certification maintenance.
+    - id: ENF-CERTIFICATION-REVOCATION
+      type: Remediation
+      mode: Manual
+      required: false
+      description: >
+        FedRAMP PMO may suspend or revoke certification for persistent
+        non-compliance with KSI requirements.
+    - id: ENF-AUTOMATED-GATE
+      type: Gate
+      mode: Automated
+      required: true
+      description: >
+        Automated enforcement gates that prevent deployment of changes
+        that would violate KSI requirements.
+  non-compliance: >
+    Non-compliance with FedRAMP Class C KSI requirements may result in
+    escalation to the FedRAMP PMO, issuance of corrective action plans,
+    suspension of marketplace listing, or revocation of FedRAMP certification.
+    Providers must address KSI deficiencies within timeframes established by
+    the FedRAMP Consolidated Rules for 2026.
