@@ -23,3 +23,12 @@ should mean adding a collector, not a new policy.
 When a policy cannot stay neutral and leaks a source's vocabulary, name the file
 and package for that source (e.g. `github_default_branch_merge_review.rego`, package
 `...github_default_branch_merge_review`) so the coupling is explicit.
+
+## Rule: we're a stakeholder in complytime and complypack, not just a consumer
+
+This project runs on the `complytime`/`complyctl` and `complypack` tooling
+(https://github.com/complytime/complytime and https://github.com/complytime/complypack).
+We have influence
+over those tools' direction. When working here and we hit a gap, rough edge,
+or missing feature in that tooling, default to contributing the fix/feature
+upstream to those repos rather than just working around it locally.
