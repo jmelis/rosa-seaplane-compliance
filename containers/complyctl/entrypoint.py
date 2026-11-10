@@ -55,7 +55,9 @@ def main() -> None:
 
     run(["complyctl", "get"])
     run(["complyctl", "doctor", "--format", "text"], check=False)
-    run(["complyctl", "scan", "rosa-seaplane", "--format", "oscal,sarif,pretty"])
+    # No target name: scans every target configured for this policy
+    # (rosa-seaplane-ampel and rosa-seaplane-opa) in one report.
+    run(["complyctl", "scan", "--policy-id", "change-management", "--format", "oscal,sarif,pretty"])
 
 
 if __name__ == "__main__":

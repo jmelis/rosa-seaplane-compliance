@@ -37,7 +37,7 @@ flowchart LR
     MAP --> COVSC["coverage.py"]
     BASE --> COVSC --> COV["coverage<br/>to the team"]
 
-    LOG -.->|later| S3["S3 evidence locker"]
+    LOG --> PUSH["push-evidence.sh"] --> S3["S3 evidence locker"]
 ```
 
 - **Control catalog, Gemara L2** (`gemara/*/controls.yaml`): what must be true,
@@ -70,25 +70,54 @@ Neither needs an L5 EvaluationLog; both are derived from the authored YAML.
 
 ## Running an evaluation
 
+See [docs/credentials.md](docs/credentials.md) for how to obtain every
+credential referenced below (`GITHUB_TOKEN`, `RSC_S3_BUCKET`/AWS, the OCI
+registry). By default nothing here touches anything public or real: the
+OCI registry and S3 bucket below are local-only (see `Makefile`'s `REGISTRY`
+and `docs/credentials.md`).
+
+`make run-local` installs providers to `~/.local/share/complytime/providers`
+(Linux XDG default). On macOS, complyctl looks in
+`~/Library/Application Support/complytime` instead unless `$XDG_DATA_HOME` is
+set — export `XDG_DATA_HOME=$HOME/.local/share` for local macOS runs so
+`complyctl doctor`/`scan` find the installed providers.
+
 ```bash
 make validate                  # optional: cue vet the Gemara YAML against upstream schema
-oras login quay.io
+podman run -d --name local-oci-registry -p 5050:5000 docker.io/library/registry:2
 make publish-policy            # push L2 controls + L3 policy as an OCI bundle
 make publish-opa-bundle        # push all domains' Rego as one project bundle (opa evaluator)
 export GITHUB_TOKEN=ghp_...
 make run-local                 # collect evidence, then complyctl scan (the L4 run)
                                #   (or: make build-image && make run-image)
+export RSC_S3_BUCKET=...
+make push-evidence              # push evidence/output/ + .complytime/scan/ to the evidence locker
 make rtm-ksi                   # the auditor-facing RTM (CSV)
 make coverage                  # the team's KSI + 800-53 coverage view
 ```
 
-## Where evidence goes (and will go)
+## Where evidence goes
 
-Today each run's L5 EvaluationLog lands in its output directories
-(`evidence/output/`, `.complytime/scan/`). **Next:** push each EvaluationLog to a
-shared **evidence locker** (an S3 bucket) so there is a durable, append-only
-history. Aggregating and verifying across runs comes after that. For now this
-repo's job is the RTM and running the evaluation, not long-term storage.
+Each run's raw evidence (`evidence/output/`) and L5 EvaluationLog
+(`.complytime/scan/`) land locally first. `make push-evidence`
+(`scripts/push-evidence.sh`) then pushes both to a shared **evidence locker**
+(an S3 bucket) under a timestamped, append-only prefix
+(`s3://$RSC_S3_BUCKET/$RSC_S3_PREFIX/<run-timestamp>/`), so history survives
+between runs. Aggregating/verifying across runs still comes after that; this
+repo's job is the RTM, running the evaluation, and getting the evidence to
+the locker — not analyzing the locker's contents.
+
+Requires `RSC_S3_BUCKET` (and AWS credentials for it) in the environment.
+For local development against a non-AWS S3-compatible endpoint (e.g.
+[adobe/s3mock](https://hub.docker.com/r/adobe/s3mock), MinIO), also set
+`RSC_S3_ENDPOINT_URL`:
+
+```bash
+podman run -d --name local-s3 -p 9090:9090 docker.io/adobe/s3mock:latest
+export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1
+aws --endpoint-url http://localhost:9090 s3 mb s3://rosa-seaplane-evidence
+RSC_S3_BUCKET=rosa-seaplane-evidence RSC_S3_ENDPOINT_URL=http://localhost:9090 make push-evidence
+```
 
 ## Where things live
 
@@ -101,8 +130,10 @@ repo's job is the RTM and running the evaluation, not long-term storage.
   that the mapping/baseline IDs and required-sets above are checked against.
   Reference only — nothing in `scripts/` or `opa/` reads them directly.
 - `opa/<domain>/policy/*.rego` the Rego checks for `opa`-evaluated ARs (e.g. `github_default_branch_merge_review.rego` for `RSC.CMT.CTRL01.AR02`), authored per domain but published together as one project bundle.
+- `ampel/specs/*.yaml` custom snappy specs for `ampel`-evaluated ARs, when no snappy builtin matches what the AR actually describes (see `github-branch-protection.yaml`'s header comment).
+- `ampel/policies/<AR-FQDN>.json` the granular AMPEL policy (tenets) each `ampel`-evaluated AR is checked against, loaded via `.complytime/complytime.yaml`'s `ampel_policy_dir` global variable rather than shipped inside the OCI policy bundle.
 - `evidence/<AR-FQDN>.*` one executable collector per AR, named by its AR FQDN (e.g. `RSC.CMT.CTRL01.AR01.sh`), pulling that AR's raw evidence (GitHub via `gh api` today). The entrypoint runs every executable here.
-- `scripts/` `generate_rtm.py`, `coverage.py`, and the `publish-*.sh` helpers.
+- `scripts/` `generate_rtm.py`, `coverage.py`, the `publish-*.sh` helpers, and `push-evidence.sh` (evidence -> S3 locker).
 - `.complytime/complytime.yaml` complyctl runtime config (policy refs, target, variables).
 - `containers/complyctl/` image bundling complyctl + both evaluators, for scheduled runs.
 
@@ -112,10 +143,27 @@ repo's job is the RTM and running the evaluation, not long-term storage.
   currently covered by a mapping (see `make coverage`) — `gemara/change-management`
   is still the only control domain; the baselines now reflect the full Class C
   required sets, so the gap is real work, not a stub.
-- `builtin:github/branch-rules.yaml`'s exact checks vs. `RSC.CMT.CTRL01.AR01`'s wording: unverified.
 - `RSC.CMT.CTRL01.AR02` does not detect admin-bypass merges (needs the org audit log API).
 - Containerfile tool versions are mostly `@latest`; pin before relying on this for real evidence.
 - `opa-provider` is upstream-flagged as testing-only.
+- `complyctl scan` (with no target name, or scanning all targets for a policy)
+  dispatches every evaluator against every target, not just the evaluator(s)
+  a target actually uses. With AR01 (ampel) and AR02 (opa) split across two
+  targets, this surfaces as non-fatal "N operational errors" noise in scan
+  output (each evaluator tried once against the other's target) and a
+  non-zero exit code even when every real per-target result is correct —
+  see `.complytime/complytime.yaml`'s comments for the full explanation.
+- The `opa-provider` release needs two fixes to work with this project's
+  two-evaluator-per-policy setup (not yet upstreamed, parked for a PR):
+  Generate hard-fails instead of skipping for a target with no
+  `opa_bundle_ref`/complypack, and its `conftest pull` call has no plain-HTTP
+  passthrough (unlike complyctl's own `policies[].url`). Local development
+  currently needs a build of `opa-provider` from a patched checkout; see
+  `docs/credentials.md`'s OCI registry section.
+- complyctl's top-level `variables:` (global, as opposed to `targets[].variables`)
+  are not expanded for `${ENV_VAR}` references — only target-scoped variables
+  are. `ampel_policy_dir` in `.complytime/complytime.yaml` is a relative path
+  to work around this; flag if you hit the same thing elsewhere.
 
 ## Glossary
 

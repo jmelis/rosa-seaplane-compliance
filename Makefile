@@ -1,14 +1,21 @@
-# TODO: update here and in .complytime/complytime.yaml when this namespace changes.
-REGISTRY            ?= quay.io/jmelis/rosa-seaplane-compliance
+# TODO: point at a real registry when this project has one; update here and
+# in .complytime/complytime.yaml together. Defaults to a local-only registry
+# (see docs/credentials.md) so `make publish-policy`/`make publish-opa-bundle`
+# work out of the box without touching anything public. REGISTRY carries an
+# "http://" prefix (stripped by the publish scripts, which pass --plain-http/
+# --tls=false when they see it); IMAGE_REGISTRY has no scheme since image
+# tags don't take one.
+REGISTRY             ?= http://localhost:5050/rosa-seaplane-compliance
+IMAGE_REGISTRY        ?= localhost:5050/rosa-seaplane-compliance
 POLICY_VERSION       ?= v0.1.0
 OPA_BUNDLE_VERSION   ?= v0.1.0
-IMAGE                ?= $(REGISTRY)/complyctl-runner:latest
+IMAGE                ?= $(IMAGE_REGISTRY)/complyctl-runner:latest
 
 # Gemara CUE schema version to validate against; only affects `make validate`,
 # not complyctl itself. Pulled from the CUE Central Registry.
 GEMARA_SCHEMA_VERSION ?= v1.6.0
 
-.PHONY: validate test publish-policy publish-opa-bundle build-image run-local run-image doctor coverage coverage-ksi coverage-nist rtm-ksi rtm-nist
+.PHONY: validate test publish-policy publish-opa-bundle build-image run-local run-image doctor coverage coverage-ksi coverage-nist rtm-ksi rtm-nist push-evidence
 
 ## Validate Gemara YAML against the upstream CUE schema (needs `cue` CLI).
 validate:
@@ -36,7 +43,7 @@ build-image:
 
 ## Run evidence -> scan using locally installed complyctl + providers.
 run-local:
-	RSC_EVIDENCE_DIR="$$(pwd)/evidence/output" GITHUB_TOKEN=$${GITHUB_TOKEN:?set GITHUB_TOKEN} \
+	RSC_EVIDENCE_DIR="$$(pwd)/evidence/output" RSC_REPO_ROOT="$$(pwd)" GITHUB_TOKEN=$${GITHUB_TOKEN:?set GITHUB_TOKEN} \
 	  python3 containers/complyctl/entrypoint.py
 
 ## Run the same loop inside the built container image.
@@ -75,3 +82,8 @@ rtm-nist:
 	  --mapping mappings/change-management-to-nist.mapping.yaml \
 	  --policy gemara/change-management/policy.yaml \
 	  --out rtm/change-management-to-nist.csv
+
+## Push this run's evidence/output/ and .complytime/scan/ (the L5 EvaluationLog)
+## to the shared evidence locker. Requires RSC_S3_BUCKET; see scripts/push-evidence.sh.
+push-evidence:
+	./scripts/push-evidence.sh
