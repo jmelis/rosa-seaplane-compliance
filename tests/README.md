@@ -15,6 +15,13 @@ use a local binary instead, or `CONFTEST_IMAGE` to pin a different image.
 - **Fixtures** (`conftest test`): the real policies run over realistic
   evidence, `fixtures/<AR>/pass.json` (must pass) and `fail.json` (must be
   denied). These also document the shape produced by `evidence/<AR>.sh`.
+- **Findings report** (`test_build_findings.py`, `test_findings_rules.py`,
+  `test_render_findings_html.py`): the builder is a pure function over pre-computed policy
+  results, tested on synthetic data, plus one integration test that runs the real policies
+  over the fail fixtures when `conftest` is installed (skipped with a message otherwise).
+  The rules catalog must match the Rego exactly: a `deny` without `with_rule("<id>", ...)`,
+  an id missing from `config/findings/rules.yaml`, an unused id, or a rule without a fix hint
+  fails the build.
 - **Python unit tests** (`tests/python/`), including that the entrypoint fails a
   run when an AR has no evidence. The trail viewer is tested on synthetic data
   only: `tests/python/trace_fakes.py` builds a fake repository (two domains, a KSI

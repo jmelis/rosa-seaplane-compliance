@@ -145,12 +145,16 @@ such as `2 requirements: 0 passed, 2 failed, 0 not applicable, 0 skipped, 0 erro
 **If an AR failed, find out why.**
 
 ```bash
-make why AR=RSC.CMT.CTRL01.AR02     # per-repository denials, and any repo the collector could not reach
+make findings                       # everything, grouped: output/findings.md (and a Findings tab in make sdr-view)
+make why AR=RSC.CMT.CTRL01.AR02     # one AR in detail: per-target denials, and any target the collector could not reach
 ```
 
-The scan keeps only one message per AR, so `make why` re-reads the evidence files
-(`evidence/output/<AR>/<repo>.json`) with the same policies and lists every
-denial by repository. Then look at what the AR requires
+`make findings` keeps three kinds of thing apart: **findings** (each denial with its rule, subject and a
+fix hint, split into *violations*, *incomplete evidence* where we could not tell, and *not reached*
+targets, which are never mixed up), **gaps** in our own work, and **limits** of the checks. It is plain code
+over the evidence on disk, with no AI and no network. The scan keeps only one message per AR, so both
+commands re-read the evidence files (`evidence/output/<AR>/<target>.json`) with the same policies.
+Then look at what the AR requires
 (`complypack requirements --catalog RSC.CMT.CTRL --config complypack.yaml --format text`),
 the check itself (`opa/<domain>/policy/<name>.rego`, named in the AR's page in the viewer), and
 the scan's own report (`.complytime/scan/report-*.md`).
@@ -260,14 +264,15 @@ credential.
 | `make publish-policy` | Pushes each domain's controls and policy to the registry as one OCI artifact each. | `oras pull --plain-http localhost:5050/rosa-seaplane-compliance/policies/change-management:v0.1.0 -o /tmp/policy-bundle` |
 | `make publish-complypack` | Packs every domain's Rego (minus tests) and the merged `complytime-mapping.json` into one complypack, validating first, and pushes it. | after a run: `ls ~/.cache/complytime/complypacks/opa/*/content` (macOS: `~/Library/Caches/complytime/...`) |
 | `make run-local` | Collects evidence from every repo in `config/scope.yaml` and every AWS account of the environment (read-only; needs the AWS access in `docs/credentials.md` and Prowler from the one-time setup), then `complyctl scan`. Renders `.complytime/complytime.yaml` first (`make config`). | `evidence/output/<AR>/<repo>.json` and `manifest.json`; in `.complytime/scan/`: `report-*.md` (readable), `evaluation-log-*.yaml` (L5), `assessment-results-*.json` (OSCAL), `scan-*.sarif.json` |
-| `make why AR=<id>` | Lists the per-repo denials for an AR and any repo the collector could not reach. | stdout |
+| `make findings` | One deterministic report (no AI, no network) over the evidence of the last run: **findings** (violations, incomplete evidence, not-reached targets, each with rule, subject and fix hint), **gaps** in our work per KSI, and **limits** of each check. Runs the policies itself; re-runs no collector. | `output/findings.md`, `output/findings.json` |
+| `make why AR=<id>` | Lists the per-target denials for an AR (with rule ids) and any target the collector could not reach. | stdout |
 | `make push-evidence` | Copies `evidence/output/` and `.complytime/scan/` to the evidence locker under `s3://$RSC_S3_BUCKET/$RSC_S3_PREFIX/<run-timestamp>/`. Needs `RSC_S3_BUCKET` (and `RSC_S3_ENDPOINT_URL` for a local bucket). | `aws --endpoint-url "$RSC_S3_ENDPOINT_URL" s3 ls --recursive "s3://$RSC_S3_BUCKET/"` |
 | `make env` | Shows the selected environment (`RSC_ENV`, default `integration`) and whether each of its AWS accounts resolves from the platform's account snapshot. | stdout |
 | `make aws-role ACTION=plan` | Plans, applies, verifies or deletes the read-only AWS role in every account of the environment (`YES=1` to write). The role and its permissions are defined in `config/aws/compliance-readonly-role.yaml`. | stdout |
 | `make coverage [KSI=<id>]` | The KSI rollup: per KSI its methods, scope, controls, explanations and state; with `KSI=` a drill-down and next steps. Needs `complypack`. | stdout, and `output/coverage.json` |
 | `make sdr` | Builds the FedRAMP Security Decision Record from coverage, the KSI records, the policies' planned cycle and the latest L5 results; validated against the vendored schema. Failed results stay visible, an AR with no result is "not evaluated", assessor fields stay empty, and local paths, usernames, account IDs and raw messages are never written. | `output/sdr/sdr.json` |
 | `make trace` | Builds `output/trace.json`: every AR joined to what it evidences (KSIs, 800-53, any framework with a mapping file, each link with its rationale), its plan, collector, schema, Rego, fixtures, the targets reached, and its latest result. Fails, listing every problem, if a link does not resolve. | `output/trace.json` |
-| `make sdr-view` | Builds the trace, then renders one offline HTML page with two tabs: **Assessment requirements** (index plus a page per AR) and **KSIs** (overview, filterable list, page per KSI). | open `output/sdr/index.html` |
+| `make sdr-view` | Builds the trace, then renders one offline HTML page with three tabs: **Assessment requirements** (index plus a page per AR), **Findings** (when `make findings` has evidence to work from) and **KSIs** (overview, filterable list, page per KSI). | open `output/sdr/index.html` |
 | `make build-image` / `make run-image` | The same evidence-and-scan loop in a container, for scheduled runs. GitHub collectors only: the AWS collectors need the SAML login and sibling checkouts that the image does not have yet. | |
 
 Everything under `output/`, `evidence/output/` and `.complytime/` is gitignored: it
@@ -314,13 +319,15 @@ file and the schema.
   files that no code reads.
 - `config/` `scope.yaml` (repositories in scope), `environments/` (regions and
   logical account names, no IDs), `automation.yaml` (the automation exemption),
-  `aws/` (the read-only role), `prowler/checks.yaml` (which Prowler checks back which AR, and why).
+  `aws/` (the read-only role), `prowler/checks.yaml` (which Prowler checks back which AR, and why),
+  `findings/rules.yaml` (title and fix hint for every rule id a Rego `deny` carries as `[rule: <id>]`).
 - `opa/<domain>/policy/*.rego` the checks, one package per AR; each judges only
   evidence whose `assessment_requirement` is its own. Published together as one complypack.
 - `evidence/<AR>.sh` one collector per AR (GitHub via `gh api`, AWS via the IAM credential report and CloudTrail), writing
   `evidence/output/<AR>/<target>.json` plus a `manifest.json` of per-target
   `collected`/`error`. A target is a repo or an AWS account. One target failing never stops the others. Shared code in
   `evidence/lib/` (`aws.sh` for AWS targets).
+- `evidence/known-gaps.yaml` what each check cannot see, in generic wording (public repo); shown in `make findings`.
 - `schemas/` the evidence shapes. `tests/` unit tests and pass/fail fixtures.
 - `scripts/` coverage, SDR, trace and viewer generators, the publish and push helpers.
 - `.complytime/complytime.yaml` complyctl config, **generated** by `make config` from the domains; gitignored.

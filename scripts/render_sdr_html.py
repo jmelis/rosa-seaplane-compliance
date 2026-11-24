@@ -388,6 +388,83 @@ code{font-family:ui-monospace,monospace;font-size:.85em;background:color-mix(in 
 .missing{border-top:1px solid var(--line);padding-top:.6rem}
 """
 
+FINDING_KIND_NOTE = {
+    "violation": "The system does not meet the requirement.",
+    "incomplete-evidence": "We could not tell: an incomplete collection, a cross-check mismatch, or a check that did not run. Never a pass.",
+    "not-reached": "A target the collector could not reach. Unchecked, which is neither a pass nor a failure.",
+}
+
+
+def render_findings_page(rep: dict) -> str:
+    """Findings, gaps and limits, kept apart. Every value is escaped: subjects and
+    messages can carry attacker-controlled text (PR titles, names)."""
+    meta, findings = rep["meta"], rep["findings"]
+    counts = meta["counts"]["by_kind"]
+    ev = meta["evidence_generated_at"]
+    kinds = [k for k in ("violation", "incomplete-evidence", "not-reached") if any(f["kind"] == k for f in findings)]
+    ar_ids = sorted({f["ar"] for f in findings})
+    out = [f'<p class="muted">Environment {e(meta["environment"])} · generated {e(meta["generated_at"])} · evidence collected '
+           f'{e(ev["oldest"])} to {e(ev["newest"])} · built from files on disk, no AI, no network.</p>',
+           '<div class="kpis">'
+           + "".join(f'<div>{counts.get(k, 0)}<span>{e(k)}</span></div>' for k in ("violation", "incomplete-evidence", "not-reached"))
+           + "</div>",
+           '<p class="muted">Findings are about the system. Gaps are about our own checks and records. Limits say what a check cannot see.</p>']
+    if meta["unclassified"]:
+        out.append(f'<p><strong>{meta["unclassified"]} denial(s) carry no rule id</strong>: a policy needs fixing.</p>')
+    opts = lambda items: "".join(f'<option value="{e(i)}">{e(i)}</option>' for i in items)
+    out.append('<h2>Findings</h2><div class="filters">'
+               '<input id="fq" type="search" placeholder="Filter by rule, target or subject" aria-label="Filter findings">'
+               f'<select id="fkind" aria-label="Kind"><option value="">Any kind</option>{opts(kinds)}</select>'
+               f'<select id="far" aria-label="Requirement"><option value="">Any requirement</option>{opts(ar_ids)}</select>'
+               '<span id="fshown" class="muted"></span></div>')
+    groups = {}
+    for f in findings:
+        groups.setdefault((f["kind"], f["ar"], f["rule"]), []).append(f)
+    if not groups:
+        out.append("<p>No findings.</p>")
+    for (kind, ar, rule), items in groups.items():
+        head = items[0]
+        targets = sorted({f["target"] for f in items})
+        subjects = []
+        for f in items:
+            label = f["subject"] if f["subject"] == f["target"] else f'{f["target"]}: {f["subject"]}'
+            if label not in subjects:
+                subjects.append(label)
+        text = " ".join([kind, ar, rule, head["title"], *targets, *subjects]).lower()
+        # data-state / data-result are the attributes the shared filter reads: here they hold kind and requirement.
+        out.append(
+            f'<details class="ksi findrow" data-text="{e(text)}" data-state="{e(kind)}" data-result="{e(ar)}">'
+            f'<summary><span class="id">{e(ar)}</span> <span class="name">{e(head["title"])}</span>'
+            f' <span class="signals"><span class="state">{e(kind)}</span> <span class="muted">{len(items)} on {len(targets)} target(s)</span></span></summary>'
+            f'<div class="body"><p class="muted">Rule <code>{e(rule)}</code>. Serves {e(", ".join(head["ksis"]) or "no KSI")}. '
+            f'{e(FINDING_KIND_NOTE.get(kind, ""))}</p>'
+            + (f'<p><strong>Fix:</strong> {e(head["fix"])}</p>' if head["fix"] else "")
+            + "<ul>" + "".join(f"<li>{e(x)}</li>" for x in subjects) + "</ul>"
+            f'<p class="muted">Example message: {e(head["message"])}</p></div></details>')
+
+    out.append("<h2>Gaps in our own work</h2>")
+    out.append('<table><thead><tr><th>KSI</th><th>State</th><th>Methods</th><th>Controls decided</th><th>Explanations</th><th>Next</th></tr></thead><tbody>')
+    for g in [g for g in rep["gaps"] if g["state"] != "Not started"]:
+        out.append(f'<tr><td><span class="id">{e(g["ksi"])}</span> {e(g["name"])}</td><td>{state_badge(g["state"])}</td>'
+                   f'<td>{g["methods_implemented"]}/{g["methods_required"]}</td><td>{g["controls_decided"]}/{g["controls_total"]}</td>'
+                   f'<td>{e(g["explanations"])}</td><td>{e("; ".join(g["next"]))}'
+                   + (f'<br><span class="muted">open controls: {e(", ".join(g["open_controls"]))}</span>' if g["open_controls"] and g["state"] != "Not started" else "")
+                   + (f'<br><span class="muted">not reached: {e(", ".join(t["target"] for t in g["targets_not_reached"]))}</span>' if g["targets_not_reached"] else "")
+                   + "</td></tr>")
+    out.append("</tbody></table>")
+    idle = [g["ksi"] for g in rep["gaps"] if g["state"] == "Not started"]
+    if idle:
+        out.append(f'<p class="muted">Not started ({len(idle)}): {e(", ".join(idle))}</p>')
+
+    out.append("<h2>Limits of the checks</h2><p class=\"muted\">What each check cannot see. A pass means no problem was found within these limits, not that none exists.</p>")
+    for ar, spec in rep["limits"].items():
+        if not spec["limits"]:
+            continue
+        out.append(f'<h4>{e(ar)}</h4>' + (f'<p class="muted">{e(spec["ar_text"])}</p>' if spec["ar_text"] else "")
+                   + "<ul>" + "".join(f'<li>{e(x["text"])}</li>' for x in spec["limits"]) + "</ul>")
+    return "".join(out)
+
+
 JS = """
 (function(){
   document.documentElement.className+=' js';
@@ -416,12 +493,13 @@ JS = """
   var g=function(i){return document.getElementById(i)};
   filters([].slice.call(document.querySelectorAll('details.ksi')),g('q'),g('state'),g('result'),g('shown'),'KSIs');
   filters([].slice.call(document.querySelectorAll('tr.arrow')),g('arq'),g('arstate'),g('arresult'),g('arshown'),'ARs');
+  filters([].slice.call(document.querySelectorAll('details.findrow')),g('fq'),g('fkind'),g('far'),g('fshown'),'findings');
   window.addEventListener('hashchange',show);show();
 })();
 """
 
 
-def render(sdr: dict, coverage: dict, trace: dict = None) -> str:
+def render(sdr: dict, coverage: dict, trace: dict = None, findings: dict = None) -> str:
     entries = {k["ksiId"]: k for k in sdr.get("keySecurityIndicators", [])}
     results = {kid: results_by_ar(ent) for kid, ent in entries.items()}
     s = coverage["summary"]
@@ -433,10 +511,16 @@ def render(sdr: dict, coverage: dict, trace: dict = None) -> str:
     cards = "".join(render_ksi(row, entries.get(row["id"]), ars_for_ksi.get(row["id"])) for row in coverage["ksis"])
     meta = sdr.get("metadata", {})
     nav = tab_pages = ""
-    if trace:
-        nav = ('<nav class="tabs"><a href="#page-ars" data-tab="page-ars">Assessment requirements</a>'
-               '<a href="#page-ksis" data-tab="page-ksis">KSIs</a></nav>')
-        tab_pages = (f'<section class="page" id="page-ars">{render_ar_index(trace)}</section>')
+    if trace or findings:
+        links = []
+        if trace:
+            links.append('<a href="#page-ars" data-tab="page-ars">Assessment requirements</a>')
+            tab_pages += f'<section class="page" id="page-ars">{render_ar_index(trace)}</section>'
+        if findings:
+            links.append('<a href="#page-findings" data-tab="page-findings">Findings</a>')
+            tab_pages += f'<section class="page" id="page-findings">{render_findings_page(findings)}</section>'
+        links.append('<a href="#page-ksis" data-tab="page-ksis">KSIs</a>')
+        nav = '<nav class="tabs">' + "".join(links) + "</nav>"
     ar_pages = "".join(render_ar_page(trace, ar) for ar in trace["ars"].values()) if trace else ""
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -479,6 +563,7 @@ def main() -> None:
     ap.add_argument("--sdr", default=str(ROOT / "output/sdr/sdr.json"))
     ap.add_argument("--coverage", default=str(ROOT / "output/coverage.json"))
     ap.add_argument("--trace", default=str(ROOT / "output/trace.json"))
+    ap.add_argument("--findings", default=str(ROOT / "output/findings.json"))
     ap.add_argument("--out", default=str(ROOT / "output/sdr/index.html"))
     args = ap.parse_args()
     for p in (args.sdr, args.coverage):
@@ -489,7 +574,12 @@ def main() -> None:
         trace = json.loads(Path(args.trace).read_text())
     else:
         print(f"NOTE: {args.trace} not found; rendering without the assessment requirements tab (run `make trace`).")
-    page = render(json.loads(Path(args.sdr).read_text()), json.loads(Path(args.coverage).read_text()), trace)
+    findings = None
+    if Path(args.findings).is_file():
+        findings = json.loads(Path(args.findings).read_text())
+    else:
+        print(f"NOTE: {args.findings} not found; rendering without the Findings tab (run `make findings`).")
+    page = render(json.loads(Path(args.sdr).read_text()), json.loads(Path(args.coverage).read_text()), trace, findings)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(page)
