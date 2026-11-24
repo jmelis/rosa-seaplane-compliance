@@ -245,7 +245,9 @@ def scope_cell(r: dict) -> str:
         return "-"
     if not all(s["run"] for s in impl):
         return "not run"
-    return f"{min(s['reached'] for s in impl)}/{impl[0]['total']}"
+    # Methods can reach different kinds of targets (repos, accounts), so add up what
+    # was reached and what was expected across all of them.
+    return f"{sum(s['reached'] for s in impl)}/{sum(s['total'] for s in impl)}"
 
 
 def controls_cell(r: dict) -> str:

@@ -146,6 +146,27 @@ class AwsTargets(unittest.TestCase):
         self.assertEqual(sorted(scope["missing"]), ["management-mc01", "regional"])
 
 
+class ScopeCell(unittest.TestCase):
+    def row(self, *scopes):
+        return {"methods": [{"implemented": True, "scope": {"run": True, "reached": r, "total": t}} for r, t in scopes]}
+
+    def test_single_method(self):
+        self.assertEqual(coverage.scope_cell(self.row((6, 7))), "6/7")
+
+    def test_methods_over_different_target_kinds_add_up(self):
+        # e.g. one method reaches 7 of 7 repos and another 3 of 3 accounts: complete, not "3/7"
+        self.assertEqual(coverage.scope_cell(self.row((7, 7), (3, 3))), "10/10")
+
+    def test_a_partial_method_shows_in_the_total(self):
+        self.assertEqual(coverage.scope_cell(self.row((7, 7), (2, 3))), "9/10")
+
+    def test_not_run_and_none(self):
+        self.assertEqual(coverage.scope_cell({"methods": []}), "-")
+        row = self.row((1, 1))
+        row["methods"][0]["scope"]["run"] = False
+        self.assertEqual(coverage.scope_cell(row), "not run")
+
+
 class Controls(unittest.TestCase):
     def test_addressed_only_counts_related_controls(self):
         c = roll_ksi(base_data(), "KSI-CMT-VTD")["controls"]
