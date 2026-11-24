@@ -54,8 +54,4 @@ echo "== Python unit tests =="
 python3 -I -m unittest discover -s tests/python -p 'test_*.py'
 
 echo
-echo "== Python unit tests =="
-python3 -I -m unittest discover -s tests/python -p 'test_*.py'
-
-echo
 echo "All implemented tests passed."
