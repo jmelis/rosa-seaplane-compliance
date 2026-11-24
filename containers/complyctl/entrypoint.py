@@ -81,6 +81,10 @@ def main() -> None:
     require_env("GITHUB_TOKEN", "required by the evidence collectors (gh api).")
     require_env("RSC_EVIDENCE_DIR", "the opa evaluator's input_path in .complytime/complytime.yaml references it directly.")
 
+    env_name = os.environ.get("RSC_ENV", "integration")
+    if not Path(f"config/environments/{env_name}.yaml").is_file():
+        sys.exit(f"ERROR: unknown RSC_ENV {env_name!r}; expected a file in config/environments/.")
+
     texts = ar_texts()
     collectors = sorted(
         p for p in EVIDENCE_DIR.iterdir() if p.is_file() and os.access(p, os.X_OK)

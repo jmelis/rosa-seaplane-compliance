@@ -86,6 +86,7 @@ make run-local                 # collect evidence, then complyctl scan (the L4 r
                                #   (or: make build-image && make run-image)
 export RSC_S3_BUCKET=... RSC_S3_ENDPOINT_URL=...
 make push-evidence              # push evidence/output/ + .complytime/scan/ to the evidence locker
+make env                       # which environment (RSC_ENV, default integration) and AWS profiles are set
 make coverage                  # the team's KSI coverage view
 make sdr                       # the FedRAMP Security Decision Record (output/sdr/sdr.json)
 make sdr-view                  # offline HTML viewer for it (output/sdr/index.html)

@@ -85,6 +85,29 @@ These `test`/`test` values aren't real secrets — they're s3mock's
 no-op local credentials, fine to keep in a shell history or a local
 `.envrc`. Never do this against real AWS.
 
+## AWS accounts (`RSC_ENV`)
+
+Local runs evaluate one environment, `integration` by default. Switch with
+`make run-local RSC_ENV=stage`: the checks and scope are identical, only the AWS
+profiles differ.
+
+`config/environments/<env>.yaml` lists the environment's regions and logical
+accounts (`central`, `regional`, `management-cluster`), and nothing else: no
+account IDs, ARNs or profile names, because this repo is public. Each account is
+reached through an AWS profile named by an environment variable:
+
+```bash
+# .envrc (gitignored)
+export RSC_AWS_PROFILE_INTEGRATION_CENTRAL=...
+export RSC_AWS_PROFILE_INTEGRATION_REGIONAL=...
+export RSC_AWS_PROFILE_INTEGRATION_MANAGEMENT_CLUSTER=...
+# and RSC_AWS_PROFILE_STAGE_* for stage
+```
+
+`make env` shows which of them are set (it never prints the profile names).
+Use **read-only** profiles only; never the `rosa-seaplane-account-admin` role.
+The permissions the AWS checks need are listed with the checks that use them.
+
 ## OCI registry — not evidence collection, but part of the pipeline
 
 `make publish-policy` / `make publish-complypack` push the Gemara policy and

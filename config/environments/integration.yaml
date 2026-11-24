@@ -1,0 +1,14 @@
+# Logical shape of the `integration` environment for local runs: regions and account
+# names only. NEVER put account IDs, ARNs or profile names here (this repo is
+# public).
+#
+# Each account is reached through an AWS profile named by the environment
+# variable RSC_AWS_PROFILE_<ENV>_<ACCOUNT> (upper case, '-' as '_'), e.g.
+# RSC_AWS_PROFILE_INTEGRATION_REGIONAL. Set them in the gitignored .envrc; see
+# docs/credentials.md. Use read-only profiles only.
+name: integration
+regions: [us-east-1]
+accounts:
+  - central
+  - regional
+  - management-cluster

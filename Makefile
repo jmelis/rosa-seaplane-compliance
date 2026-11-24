@@ -11,6 +11,11 @@ POLICY_VERSION       ?= v0.1.0
 COMPLYPACK_VERSION   ?= v0.1.0
 IMAGE                ?= $(IMAGE_REGISTRY)/complyctl-runner:latest
 
+# Environment evaluated by local runs: config/environments/<name>.yaml
+# (integration or stage). Switching it only changes which AWS profiles are used.
+RSC_ENV              ?= integration
+export RSC_ENV
+
 # Prefer a local .venv (python3 -m venv .venv && .venv/bin/pip install -r requirements.txt).
 PYTHON               ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 
@@ -18,7 +23,11 @@ PYTHON               ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,pytho
 # not complyctl itself. Pulled from the CUE Central Registry.
 GEMARA_SCHEMA_VERSION ?= v1.6.0
 
-.PHONY: config validate test publish-policy publish-complypack build-image run-local run-image doctor coverage push-evidence sdr sdr-view
+.PHONY: env config validate test publish-policy publish-complypack build-image run-local run-image doctor coverage push-evidence sdr sdr-view
+
+## Show the selected environment and which AWS profile variables are set.
+env:
+	$(PYTHON) scripts/environment.py $(RSC_ENV)
 
 ## Render .complytime/complytime.yaml from the gemara/*/ domains (gitignored).
 config:
