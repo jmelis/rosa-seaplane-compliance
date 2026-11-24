@@ -1,0 +1,16 @@
+# KSI record for KSI-CMT-VTD: the hand-written input to the SDR that cannot be derived
+# from the mappings, policy or scan results. Written by the engineer who
+# implements the KSI's checks, in the same PR, and reviewed by a person.
+# Leave a field empty until it is true; never write placeholder claims.
+ksi: KSI-CMT-VTD
+target-types: [github-repository]
+measures: ""
+automation-verification: ""
+validation: ""
+# A related control is "addressed" when one of the KSI's ARs maps to it, and
+# "open" unless decided here. Each decision needs a rationale:
+#   control-decisions:
+#     si-2:
+#       decision: not-applicable   # or: inherited
+#       rationale: Why this control does not apply to this KSI.
+control-decisions: {}
