@@ -18,7 +18,7 @@ PYTHON               ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,pytho
 # not complyctl itself. Pulled from the CUE Central Registry.
 GEMARA_SCHEMA_VERSION ?= v1.6.0
 
-.PHONY: validate test publish-policy publish-complypack build-image run-local run-image doctor coverage push-evidence sdr
+.PHONY: validate test publish-policy publish-complypack build-image run-local run-image doctor coverage push-evidence sdr sdr-view
 
 ## Validate Gemara YAML against the upstream CUE schema (needs `cue` CLI).
 validate:
@@ -71,3 +71,7 @@ push-evidence:
 ## Writes output/sdr/sdr.json (gitignored: it describes real findings).
 sdr: coverage
 	$(PYTHON) scripts/generate_sdr.py
+
+## Render the SDR and coverage as one offline HTML page: output/sdr/index.html.
+sdr-view: sdr
+	$(PYTHON) scripts/render_sdr_html.py

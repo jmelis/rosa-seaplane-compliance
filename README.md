@@ -88,6 +88,7 @@ export RSC_S3_BUCKET=... RSC_S3_ENDPOINT_URL=...
 make push-evidence              # push evidence/output/ + .complytime/scan/ to the evidence locker
 make coverage                  # the team's KSI coverage view
 make sdr                       # the FedRAMP Security Decision Record (output/sdr/sdr.json)
+make sdr-view                  # offline HTML viewer for it (output/sdr/index.html)
 ```
 
 ### From scratch: one full local run, step by step
@@ -235,6 +236,13 @@ Failed results stay visible; an AR with no result is "not evaluated"; the
 assessor fields are left empty. Local paths, usernames, account IDs and raw
 evaluation messages are never written. The output is gitignored because it
 describes real findings. Needs the `.venv` (see `requirements.txt`).
+
+**`make sdr-view`** — renders `output/sdr/index.html` from `sdr.json` and
+`coverage.json`: an overview by family, a filterable KSI list, and a page per
+KSI. Open it in a browser. It is fully offline (no external scripts, fonts or
+requests), HTML-escapes all data, and shows implementation state and
+pass/fail as separate signals. Don't publish it anywhere: it describes real
+findings.
 
 ## Where evidence goes
 
