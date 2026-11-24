@@ -8,6 +8,11 @@ as PR titles). The only script is an inline filter for the KSI list.
 
 Implementation state (how far the checks are) and result (what the latest
 evaluation found) are separate signals, and neither implies the other.
+
+With output/trace.json (scripts/build_trace.py) the page gains an "Assessment
+requirements" tab: an index of ARs and one page per AR, laid out as an
+hourglass (why it exists above, how it is checked and the proof below).
+Results are AR-level only; the viewer says where to look for the reason.
 """
 import argparse
 import html
@@ -16,6 +21,10 @@ import re
 import sys
 from collections import defaultdict
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import generate_sdr  # noqa: E402  (cycle wording shared with the SDR)
 
 ROOT = Path(__file__).resolve().parent.parent
 RESULT_RE = re.compile(r"^(\S+): (passed|failed|inconclusive|not evaluated)")
@@ -93,7 +102,7 @@ def render_controls(row: dict) -> str:
     return "".join(parts)
 
 
-def render_ksi(row: dict, entry: dict) -> str:
+def render_ksi(row: dict, entry: dict, ar_links: list = None) -> str:
     results = results_by_ar(entry or {})
     overall = overall_result(results)
     haystack = f"{row['id']} {row['name']} {row['family']}".lower()
@@ -108,10 +117,218 @@ def render_ksi(row: dict, entry: dict) -> str:
 <h4>Implementation</h4>{statements((entry or {}).get('ksiImplementation', []), 'Nothing documented yet.')}
 <h4>Validation</h4>{statements((entry or {}).get('ksiValidation', []), 'Nothing documented yet.')}
 <h4>Methods</h4>{render_methods(row, results)}
+{render_ar_links(ar_links)}
 <h4>Latest evidence</h4>{statements([ev.get('evidenceText', '') for ev in (entry or {}).get('ksiEvidence', [])], 'No evidence yet.')}
 <h4>Related controls</h4>{render_controls(row)}
 <h4>Assessment</h4>{statements((entry or {}).get('ksiAssessment', []), 'No assessor content (assessment is independent).')}
 </div></details>"""
+
+
+
+# --- assessment requirement (AR) pages -------------------------------------------
+
+STATUS_GLYPH = {"reached": "●", "error": "!", "not reached": "○", "not run": "·"}
+UNDEFINED = '<span class="undefined">not defined yet</span>'
+
+
+def ar_slug(ar_id: str) -> str:
+    return "ar-" + slug(ar_id)
+
+
+def render_ar_links(ar_links: list) -> str:
+    """On a KSI card: the ARs that evidence it, linking to their pages."""
+    if not ar_links:
+        return ""
+    items = "".join(f'<li><a href="#{e(ar_slug(a))}">{e(a)}</a></li>' for a in ar_links)
+    return f"<h4>Assessment requirements</h4><ul>{items}</ul>"
+
+
+def first_sentence(text: str, limit: int = 150) -> str:
+    cut = text.split(". ")[0].split("; ")[0]
+    return cut if len(cut) <= limit else cut[: limit - 1].rstrip() + "…"
+
+
+def scope_strip(scope: dict) -> str:
+    """One mark per target plus a count. Reach is scope, not a result."""
+    targets = scope["targets"]
+    marks = "".join(
+        f'<span class="t t-{slug(t["status"])}" role="img" aria-label="{e(t["name"])}: {e(t["status"])}" '
+        f'title="{e(t["name"])}: {e(t["status"])}">{STATUS_GLYPH[t["status"]]}</span>' for t in targets)
+    if not scope["run"]:
+        count = "not run"
+    else:
+        count = f"{sum(t['status'] == 'reached' for t in targets)}/{len(targets)} reached"
+    return f'<span class="strip">{marks}</span> <span class="muted">{e(count)}</span>'
+
+
+def ksi_chips(trace: dict, ar: dict) -> str:
+    reqs = [trace["requirements"][k] for k in ar["requirements"]]
+    ksis = [r for r in reqs if r["kind"] == "ksi"]
+    others = len(reqs) - len(ksis)
+    chips = "".join(f'<a class="chip" href="#ksi-{e(slug(r["id"]))}">{e(r["id"])}</a>' for r in ksis)
+    if others:
+        chips += f'<span class="muted"> +{others} control{"s" if others != 1 else ""}</span>'
+    return chips or '<span class="muted">none</span>'
+
+
+def ar_result(trace: dict, ar_id: str) -> str:
+    return (trace["results"].get(ar_id) or {}).get("overall", "not evaluated")
+
+
+def render_ar_index(trace: dict) -> str:
+    ars = trace["ars"]
+    n_impl = sum(a["implemented"] for a in ars.values())
+    counts = {r: sum(ar_result(trace, i) == r for i in ars) for r in RESULT_ORDER}
+    rows = []
+    for ar_id, ar in ars.items():
+        result = ar_result(trace, ar_id)
+        text = f"{ar_id} {ar['text']} {ar['control']} " + " ".join(trace["requirements"][k]["id"] for k in ar["requirements"])
+        rows.append(
+            f'<tr class="arrow" data-text="{e(text.lower())}" data-state="{e(ar["implementation_state"])}" data-result="{e(result)}">'
+            f'<td><a class="id" href="#{e(ar_slug(ar_id))}">{e(ar_id)}</a></td>'
+            f'<td title="{e(ar["text"])}">{e(first_sentence(ar["text"]))}</td>'
+            f'<td>{ksi_chips(trace, ar)}</td>'
+            f'<td>{state_badge(ar["implementation_state"])}</td>'
+            f'<td>{result_badge(result)}</td>'
+            f'<td>{scope_strip(trace["scope"][ar_id])}</td></tr>')
+    options = lambda items: "".join(f'<option value="{e(i)}">{e(i)}</option>' for i in items)
+    return f"""
+<h2>Assessment requirements</h2>
+<p class="muted">An assessment requirement (AR) is one testable condition. It is the middle of the trail: above it, the requirements it evidences (KSIs, 800-53 controls); below it, how it is checked and what was found. Open one to read it top to bottom.</p>
+<div class="kpis">
+ <div>{len(ars)}<span>assessment requirements</span></div>
+ <div>{n_impl}/{len(ars)}<span>implemented</span></div>
+ <div>{counts['failed']}<span>failed</span></div>
+ <div>{counts['passed']}<span>passed</span></div>
+ <div>{counts['not evaluated'] + counts['inconclusive']}<span>not evaluated</span></div>
+</div>
+<p class="muted">Implementation state and result are separate signals. The strip shows targets reached (●), errored (!) or not reached (○) by collection: that is scope, not a pass/fail.</p>
+<div class="filters">
+ <input id="arq" type="search" placeholder="Filter by AR, text, control or KSI" aria-label="Filter assessment requirements">
+ <select id="arstate" aria-label="Implementation state"><option value="">Any state</option>{options(["Implemented", "Not implemented"])}</select>
+ <select id="arresult" aria-label="Result"><option value="">Any result</option>{options(RESULT_ORDER)}</select>
+ <span id="arshown" class="muted"></span>
+</div>
+<table><thead><tr><th>AR</th><th>Requirement</th><th>Serves</th><th>Implementation</th><th>Latest result</th><th>Scope</th></tr></thead>
+<tbody>{''.join(rows)}</tbody></table>"""
+
+
+def code(text) -> str:
+    return f"<code>{e(text)}</code>"
+
+
+def render_why(trace: dict, ar: dict) -> str:
+    out = []
+    for fw in trace["frameworks"]:
+        mine = [l for l in trace["links"] if l["ar"] == ar["id"] and l["framework"] == fw["id"]]
+        out.append(f'<h4>{e(fw["title"])}</h4>')
+        if not mine:
+            out.append('<p class="muted">No mapping from this AR.</p>')
+            continue
+        items = []
+        for l in mine:
+            req = trace["requirements"][l["requirement"]]
+            if req["kind"] == "ksi":
+                label = (f'<a class="id" href="#ksi-{e(slug(req["id"]))}">{e(req["id"])}</a> {e(req["name"] or "")}'
+                         f'<span class="muted"> · KSI is {e(req.get("state") or "unknown")}</span>')
+            else:
+                shown = req["display_id"] if req["display_id"] != req["id"] else req["id"]
+                label = f'<span class="id">{e(shown)}</span>'
+            why = f'<br><span class="rationale">{e(l["rationale"])}</span>' if l["rationale"] else ""
+            strength = f' <span class="muted">(strength {e(l["strength"])})</span>' if l["strength"] is not None else ""
+            items.append(f"<li>{label}{strength}{why}</li>")
+        out.append("<ul>" + "".join(items) + "</ul>")
+    out.append('<p class="muted">Another certification appears here as one more block once it has a mapping file under <code>mappings/</code>.</p>')
+    return "".join(out)
+
+
+def render_how(trace: dict, ar: dict) -> str:
+    sc, impl, plan = trace["scope"][ar["id"]], ar["impl"], ar["plan"]
+    res = trace["results"].get(ar["id"])
+
+    def step(title, body):
+        return f"<li><strong>{e(title)}</strong><div>{body}</div></li>"
+
+    steps = []
+    steps.append(step("Scope", f'{e(ar["applicability"][0] if ar["applicability"] else "unspecified")}: '
+                               f'{len(sc["expected"])} expected target(s). {scope_strip(sc)}'
+                               + ("<ul>" + "".join(
+                                   f'<li>{e(t["name"])} <span class="muted">{e(t["status"])}'
+                                   + (f': {e(t["error"])}' if t.get("error") else "") + "</span></li>"
+                                   for t in sc["targets"]) + "</ul>" if sc["targets"] else "")))
+    if impl is None:
+        for t in ("Source", "Shape", "Logic"):
+            steps.append(step(t, '<span class="muted">No automated method in the policy yet.</span>'))
+    else:
+        steps.append(step("Source", f'collector {code(impl["collector"] or "missing")} writes '
+                                    f'{code("evidence/output/" + ar["id"] + "/<target>.json")} and a manifest'))
+        steps.append(step("Shape", f'{code(impl["schema"] or "missing")}'
+                                   + (f' <span class="muted">(platform {e(impl["platform"])})</span>' if impl["platform"] else "")))
+        fx = impl["fixtures"]
+        steps.append(step("Logic", f'{code(impl["rego_file"] or "missing")} <span class="muted">package {e(impl["rego_package"])}</span>'
+                                   f'<br>unit tests: {code(impl["rego_test_file"]) if impl["rego_test_file"] else "none"}'
+                                   f'<br>fixtures: pass {"✓" if fx["pass"] else "✗ missing"}, fail {"✓" if fx["fail"] else "✗ missing"}'))
+    steps.append(step("What it checks", e(ar["what_it_checks"]) if ar["what_it_checks"] else UNDEFINED))
+    steps.append(step("Fails when", UNDEFINED if not ar["fails_when"] else e(ar["fails_when"])))
+    steps.append(step("Failure handling", UNDEFINED if not ar["failure_handling"] else e(ar["failure_handling"])))
+    if plan:
+        steps.append(step("Cadence", f'{e(generate_sdr.cycle_text({plan["frequency"]} if plan["frequency"] else set()))} '
+                                     f'<span class="muted">plan {e(plan["id"])}, evaluator {e(plan["executor"] or "none")}</span>'))
+    else:
+        steps.append(step("Cadence", '<span class="muted">No plan.</span>'))
+    steps.append(step("Result", (f'{result_badge(ar_result(trace, ar["id"]))} <span class="muted">evaluated {e(res["evaluated_at"])}</span>'
+                                 if res else f'{result_badge("not evaluated")} <span class="muted">no scan result yet</span>')))
+    return '<ol class="trace">' + "".join(steps) + "</ol>"
+
+
+def render_look_here(trace: dict, ar: dict) -> str:
+    ar_id, res = ar["id"], trace["results"].get(ar["id"])
+    sc = trace["scope"][ar_id]
+    reached = [t["name"] for t in sc["targets"] if t["status"] == "reached"]
+    example = reached[0].split("/")[-1] if reached else "<repo>"
+    scan = trace["meta"].get("scan") or {}
+    report = (res or {}).get("report_file") or scan.get("report_file")
+    log = (res or {}).get("log_file") or scan.get("log_file")
+    message = (f'<blockquote>{e(res["message"])}</blockquote>' if res and res.get("message")
+               else '<p class="muted">The scan recorded no message for this AR.</p>')
+    cmd_dir = f"opa/{ar['domain']}/policy"
+    return f"""<div class="lookhere">
+<h3>Why did it fail? Look here</h3>
+<p>This page shows pass or fail only. The scan records one result and one message for the whole AR, not one per target, so the reason is outside this viewer:</p>
+<ul>
+ <li>Human-readable report of the latest scan: {code(report) if report else '<span class="muted">none yet (run make run-local)</span>'}</li>
+ <li>Raw L5 record: {code(log) if log else '<span class="muted">none yet</span>'}</li>
+ <li>The evidence collected, one file per target: {code("ls evidence/output/" + ar_id + "/")}</li>
+ <li>The denials for one piece of evidence: {code(f"conftest test evidence/output/{ar_id}/{example}.json -p {cmd_dir} --all-namespaces")}</li>
+</ul>
+<p>The one message the scan recorded for this AR:</p>{message}
+</div>"""
+
+
+def render_ar_page(trace: dict, ar: dict) -> str:
+    ctl = trace["controls"].get(ar["control"], {})
+    res = trace["results"].get(ar["id"])
+    own = ar["missing"]["own"]
+    by_req = [f'{trace["requirements"][k]["id"]}: ' + "; ".join(v) for k, v in ar["missing"]["by_requirement"].items() if v]
+    missing = own + by_req
+    missing_html = "; ".join(e(m) for m in missing) if missing else "nothing known to be missing"
+    return f"""
+<section class="page arpage" id="{e(ar_slug(ar['id']))}">
+<p><a href="#page-ars">← All assessment requirements</a></p>
+<h2><span class="id">{e(ar['id'])}</span></h2>
+<p class="statement">{e(ar['text'])}</p>
+<p class="muted">Control {e(ar['control'])}: {e(ctl.get('title') or '')}</p>
+<p class="signals2"><span class="muted">Implementation</span> {state_badge(ar['implementation_state'])}
+ <span class="muted">Latest result</span> {result_badge(ar_result(trace, ar['id']))}
+ {f'<span class="muted">evaluated {e(res["evaluated_at"])}</span>' if res else ''}</p>
+<div class="hour">
+<div class="why"><h3>Why it exists: what this evidences</h3>{render_why(trace, ar)}</div>
+<div class="waist">{e(ar['id'])}</div>
+<div class="how"><h3>How it is checked, and the proof</h3>{render_how(trace, ar)}</div>
+</div>
+{render_look_here(trace, ar)}
+<p class="missing"><strong>Missing:</strong> {missing_html}.</p>
+</section>"""
 
 
 def render_overview(coverage: dict, results: dict) -> str:
@@ -150,34 +367,74 @@ details.ksi{border:1px solid var(--line);border-radius:6px;margin:.4rem 0}detail
 .result-failed{font-weight:700;background:color-mix(in srgb,#d1242f 22%,transparent);border-color:#d1242f}
 .result-passed{background:color-mix(in srgb,#1a7f37 20%,transparent);border-color:#1a7f37}
 h4{margin:1rem 0 .25rem}.hidden{display:none}
+nav.tabs{display:flex;gap:.25rem;margin:1rem 0;border-bottom:1px solid var(--line)}nav.tabs a{padding:.4rem .9rem;text-decoration:none;color:var(--muted);border:1px solid transparent;border-bottom:0;border-radius:6px 6px 0 0}
+nav.tabs a.active{color:var(--fg);font-weight:600;border-color:var(--line);background:color-mix(in srgb,var(--fg) 5%,transparent)}
+a{color:inherit}.chip{display:inline-block;border:1px solid var(--line);border-radius:4px;padding:0 .4rem;margin:0 .2rem .1rem 0;font-family:ui-monospace,monospace;font-size:.8rem;text-decoration:none}
+.state,.result{white-space:nowrap}input[type=search]{min-width:19rem}
+.state-implemented{border-width:3px}.state-not-implemented{border-style:dashed;color:var(--muted);border-color:var(--muted)}
+.strip{white-space:nowrap}.t{display:inline-block;width:1.1rem;text-align:center;font-size:.85rem}.t-error{font-weight:700;color:#d1242f}.t-not-reached{color:var(--muted)}
+.undefined{border:1px dashed var(--muted);border-radius:4px;padding:0 .4rem;color:var(--muted);font-style:italic}
+.signals2{display:flex;gap:.5rem;align-items:baseline;flex-wrap:wrap}
+.hour{display:grid;gap:0;margin:1rem 0}.hour .why,.hour .how{border:1px solid var(--line);border-radius:8px;padding:.25rem 1rem 1rem}
+.hour .why{border-bottom-left-radius:50% 1.2rem;border-bottom-right-radius:50% 1.2rem}.hour .how{border-top-left-radius:50% 1.2rem;border-top-right-radius:50% 1.2rem}
+.hour .waist{justify-self:center;font-family:ui-monospace,monospace;font-weight:700;border:2px solid var(--fg);border-radius:999px;padding:.15rem 1rem;margin:-.6rem 0;background:var(--bg);z-index:1}
+ol.trace{padding-left:1.4rem}ol.trace>li{margin:.5rem 0}ol.trace ul{margin:.2rem 0}.rationale{color:var(--muted)}
+.lookhere{border:2px solid var(--warnfg);background:var(--warn);color:var(--warnfg);border-radius:8px;padding:.25rem 1rem .75rem;margin:1rem 0}
+.lookhere h3{margin:.6rem 0 .3rem}.lookhere blockquote{margin:.3rem 0;padding:.3rem .75rem;border-left:4px solid var(--warnfg);overflow-wrap:anywhere}
+code{font-family:ui-monospace,monospace;font-size:.85em;background:color-mix(in srgb,var(--fg) 8%,transparent);padding:0 .25rem;border-radius:3px;overflow-wrap:anywhere}
+.missing{border-top:1px solid var(--line);padding-top:.6rem}
 """
 
 JS = """
 (function(){
-  var q=document.getElementById('q'),st=document.getElementById('state'),rs=document.getElementById('result'),
-      cards=[].slice.call(document.querySelectorAll('details.ksi')),n=document.getElementById('shown');
-  function apply(){
-    var t=q.value.toLowerCase(),shown=0;
-    cards.forEach(function(c){
-      var ok=(!t||c.dataset.text.indexOf(t)>-1)&&(!st.value||c.dataset.state===st.value)&&(!rs.value||c.dataset.result===rs.value);
-      c.classList.toggle('hidden',!ok);if(ok)shown++;
-    });
-    n.textContent=shown+' of '+cards.length+' KSIs shown';
+  document.documentElement.className+=' js';
+  var pages=[].slice.call(document.querySelectorAll('.page')),tabs=[].slice.call(document.querySelectorAll('nav.tabs a'));
+  function show(){
+    var id='';try{id=decodeURIComponent(location.hash.slice(1))}catch(x){}
+    var t=id?document.getElementById(id):null,page=t?(t.classList.contains('page')?t:t.closest('.page')):null;
+    if(!page)page=pages[0];
+    pages.forEach(function(p){p.classList.toggle('hidden',p!==page)});
+    tabs.forEach(function(a){var on=a.dataset.tab===page.id||(a.dataset.tab==='page-ars'&&page.classList.contains('arpage'));a.classList.toggle('active',on)});
+    if(t&&t.tagName==='DETAILS')t.open=true;
+    if(t&&t!==page)t.scrollIntoView();else window.scrollTo(0,0);
   }
-  [q,st,rs].forEach(function(el){el.addEventListener('input',apply)});
-  try{if(location.hash){var t=document.querySelector(location.hash);if(t&&t.tagName==='DETAILS')t.open=true}}catch(x){}
-  apply();
+  function filters(rows,q,st,rs,n,label){
+    if(!q)return;
+    function apply(){
+      var t=q.value.toLowerCase(),shown=0;
+      rows.forEach(function(c){
+        var ok=(!t||c.dataset.text.indexOf(t)>-1)&&(!st.value||c.dataset.state===st.value)&&(!rs.value||c.dataset.result===rs.value);
+        c.classList.toggle('hidden',!ok);if(ok)shown++;
+      });
+      n.textContent=shown+' of '+rows.length+' '+label+' shown';
+    }
+    [q,st,rs].forEach(function(el){el.addEventListener('input',apply)});apply();
+  }
+  var g=function(i){return document.getElementById(i)};
+  filters([].slice.call(document.querySelectorAll('details.ksi')),g('q'),g('state'),g('result'),g('shown'),'KSIs');
+  filters([].slice.call(document.querySelectorAll('tr.arrow')),g('arq'),g('arstate'),g('arresult'),g('arshown'),'ARs');
+  window.addEventListener('hashchange',show);show();
 })();
 """
 
 
-def render(sdr: dict, coverage: dict) -> str:
+def render(sdr: dict, coverage: dict, trace: dict = None) -> str:
     entries = {k["ksiId"]: k for k in sdr.get("keySecurityIndicators", [])}
     results = {kid: results_by_ar(ent) for kid, ent in entries.items()}
     s = coverage["summary"]
     options = lambda items: "".join(f'<option value="{e(i)}">{e(i)}</option>' for i in items)
-    cards = "".join(render_ksi(row, entries.get(row["id"])) for row in coverage["ksis"])
+    ars_for_ksi = {}
+    for req in (trace or {}).get("requirements", {}).values():
+        if req["kind"] == "ksi":
+            ars_for_ksi[req["id"]] = req["ars"]
+    cards = "".join(render_ksi(row, entries.get(row["id"]), ars_for_ksi.get(row["id"])) for row in coverage["ksis"])
     meta = sdr.get("metadata", {})
+    nav = tab_pages = ""
+    if trace:
+        nav = ('<nav class="tabs"><a href="#page-ars" data-tab="page-ars">Assessment requirements</a>'
+               '<a href="#page-ksis" data-tab="page-ksis">KSIs</a></nav>')
+        tab_pages = (f'<section class="page" id="page-ars">{render_ar_index(trace)}</section>')
+    ar_pages = "".join(render_ar_page(trace, ar) for ar in trace["ars"].values()) if trace else ""
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ROSA Seaplane SDR (local run)</title><style>{CSS}</style></head>
@@ -186,6 +443,9 @@ def render(sdr: dict, coverage: dict) -> str:
 <main>
 <h1>ROSA Seaplane Security Decision Record</h1>
 <p class="muted">{e(meta.get('updateSource', ''))} · generated {e(meta.get('lastUpdated', ''))} · SDR version {e(meta.get('version', ''))}</p>
+{nav}
+{tab_pages}
+<section class="page" id="page-ksis">
 <div class="kpis">
  <div>{s['covered']}/{s['ksis']}<span>KSIs covered</span></div>
  <div>{s['sdr_ready']}/{s['ksis']}<span>SDR-ready</span></div>
@@ -203,6 +463,8 @@ def render(sdr: dict, coverage: dict) -> str:
  <span id="shown" class="muted"></span>
 </div>
 {cards}
+</section>
+{ar_pages}
 </main>
 <script>{JS}</script>
 </body></html>
@@ -213,12 +475,18 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--sdr", default=str(ROOT / "output/sdr/sdr.json"))
     ap.add_argument("--coverage", default=str(ROOT / "output/coverage.json"))
+    ap.add_argument("--trace", default=str(ROOT / "output/trace.json"))
     ap.add_argument("--out", default=str(ROOT / "output/sdr/index.html"))
     args = ap.parse_args()
     for p in (args.sdr, args.coverage):
         if not Path(p).is_file():
             sys.exit(f"ERROR: {p} not found; run `make sdr` first.")
-    page = render(json.loads(Path(args.sdr).read_text()), json.loads(Path(args.coverage).read_text()))
+    trace = None
+    if Path(args.trace).is_file():
+        trace = json.loads(Path(args.trace).read_text())
+    else:
+        print(f"NOTE: {args.trace} not found; rendering without the assessment requirements tab (run `make trace`).")
+    page = render(json.loads(Path(args.sdr).read_text()), json.loads(Path(args.coverage).read_text()), trace)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(page)

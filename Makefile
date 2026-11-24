@@ -23,7 +23,7 @@ PYTHON               ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,pytho
 # not complyctl itself. Pulled from the CUE Central Registry.
 GEMARA_SCHEMA_VERSION ?= v1.6.0
 
-.PHONY: env config validate test publish-policy publish-complypack build-image run-local run-image doctor coverage push-evidence sdr sdr-view
+.PHONY: env config validate test publish-policy publish-complypack build-image run-local run-image doctor coverage push-evidence sdr sdr-view trace
 
 ## Show the selected environment and which AWS profile variables are set.
 env:
@@ -94,6 +94,11 @@ push-evidence:
 sdr: coverage
 	$(PYTHON) scripts/generate_sdr.py
 
-## Render the SDR and coverage as one offline HTML page: output/sdr/index.html.
-sdr-view: sdr
+## Build output/trace.json: ARs joined to the requirements they evidence, their
+## implementation links, scope and latest result. Fails if a link does not resolve.
+trace: coverage
+	$(PYTHON) scripts/build_trace.py
+
+## Render the SDR, coverage and AR trail as one offline HTML page: output/sdr/index.html.
+sdr-view: sdr trace
 	$(PYTHON) scripts/render_sdr_html.py

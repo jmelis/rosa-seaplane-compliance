@@ -89,7 +89,8 @@ make push-evidence              # push evidence/output/ + .complytime/scan/ to t
 make env                       # which environment (RSC_ENV, default integration) and AWS profiles are set
 make coverage                  # the team's KSI coverage view
 make sdr                       # the FedRAMP Security Decision Record (output/sdr/sdr.json)
-make sdr-view                  # offline HTML viewer for it (output/sdr/index.html)
+make trace                     # AR trail data: ARs joined to what they evidence (output/trace.json)
+make sdr-view                  # offline HTML viewer: AR trail + KSIs (output/sdr/index.html)
 ```
 
 ### From scratch: one full local run, step by step
@@ -238,12 +239,57 @@ assessor fields are left empty. Local paths, usernames, account IDs and raw
 evaluation messages are never written. The output is gitignored because it
 describes real findings. Needs the `.venv` (see `requirements.txt`).
 
-**`make sdr-view`** — renders `output/sdr/index.html` from `sdr.json` and
-`coverage.json`: an overview by family, a filterable KSI list, and a page per
-KSI. Open it in a browser. It is fully offline (no external scripts, fonts or
+**`make trace`** — builds `output/trace.json`, the data behind the AR pages:
+every assessment requirement (AR) joined to the requirements it evidences (KSIs,
+800-53 controls, any framework a mapping file names, each link with its
+rationale), its policy plan, collector, schema, Rego and fixtures, the targets
+the collectors reached (from `manifest.json`), and its latest result. It fails,
+listing every problem, if a link does not resolve (see "Walking the trail").
+Results are AR-level only, as the scan records them.
+
+**`make sdr-view`** — builds the trace, then renders `output/sdr/index.html`
+from `sdr.json`, `coverage.json` and `trace.json`. Open it in a browser. Two
+tabs: **Assessment requirements** (the landing page: an index of ARs, and one
+page per AR) and **KSIs** (an overview by family, a filterable list, and a page
+per KSI), linked both ways. It is fully offline (no external scripts, fonts or
 requests), HTML-escapes all data, and shows implementation state and
 pass/fail as separate signals. Don't publish it anywhere: it describes real
 findings.
+
+### Walking the trail
+
+If you are new to this repo, or to compliance, start at the **AR page**, because
+every path from a requirement to evidence passes through exactly one AR. Open
+`output/sdr/index.html` and pick an AR. The page is an hourglass:
+
+- **Above the waist, why it exists:** the KSIs, 800-53 controls and any other
+  framework's requirements it evidences, each with the reason it counts. A
+  framework with no mapping from this AR says so; a new certification appears as
+  one more block once it has a mapping file.
+- **Below the waist, how it is checked and the proof:** scope (which targets were
+  reached), the collector, the evidence shape (schema), the Rego and its
+  fixtures, what it checks, when it fails, failure handling, cadence, and the
+  latest result. "Fails when" and "Failure handling" read **not defined yet**:
+  they have no structured home in the catalog, and the viewer does not invent
+  them.
+- **Why did it fail? Look here:** the viewer shows pass or fail only. The scan
+  records one result and one message per AR, not per target, so the box lists
+  where the reason lives: the latest `report-*.md`, the raw L5 log, the evidence
+  files, and the `conftest test ...` command that prints the denials for one
+  piece of evidence.
+
+The same trail without the viewer, for AR01: its text in
+`gemara/<domain>/controls.yaml`; its plan in `policy.yaml`; the links to KSIs and
+800-53 in `mappings/*.mapping.yaml`; the Rego in `opa/<domain>/policy/` (the
+package is named in `complytime-mapping.json`); the shape it reads in
+`schemas/` (named by the Rego's `# schema:` header); the collector
+`evidence/<AR>.sh`; the results in `.complytime/scan/`.
+
+**Convention `build_trace.py` enforces:** each Rego file starts with
+`# platform: <name>` and `# schema: schemas/<name>.cue` headers (the latter an
+explicit pointer to the evidence shape, so it is not a guess). Every AR with an
+Automated plan needs its collector, a package in `complytime-mapping.json`, the
+Rego file and the schema, or `make trace` fails.
 
 ## Where evidence goes
 

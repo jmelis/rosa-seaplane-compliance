@@ -16,7 +16,12 @@ use a local binary instead, or `CONFTEST_IMAGE` to pin a different image.
   evidence, `fixtures/<AR>/pass.json` (must pass) and `fail.json` (must be
   denied). These also document the shape produced by `evidence/<AR>.sh`.
 - **Python unit tests** (`tests/python/`), including that the entrypoint fails a
-  run when an AR has no evidence.
+  run when an AR has no evidence. The trail viewer is tested on synthetic data
+  only: `tests/python/trace_fakes.py` builds a fake repository (two domains, a KSI
+  framework, an 800-53 framework and a third certification, fake repos and users)
+  and `tests/fixtures/trace.sample.json` is its output with hostile `<script>`
+  text injected. A test fails if the sample drifts from what `build_trace.py`
+  produces, and another builds the real repo's trace to prove every link resolves.
 
 ## Not covered
 
