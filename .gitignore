@@ -1,9 +1,8 @@
 # Generated evidence (re-collected every run; never commit real merge data)
 evidence/output/
 
-# complyctl workspace: keep the config, ignore generated scan output/state
+# complyctl workspace: scan output/state and the generated config (make config)
 .complytime/*
-!.complytime/complytime.yaml
 
 # generated coverage, SDR and viewer output
 output/

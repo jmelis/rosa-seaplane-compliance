@@ -1,5 +1,5 @@
-# TODO: point at a real registry when this project has one; update here and
-# in .complytime/complytime.yaml together. Defaults to a local-only registry
+# TODO: point at a real registry when this project has one; update it here
+# (`make config` renders .complytime/complytime.yaml from it). Defaults to a local-only registry
 # (see docs/credentials.md) so `make publish-policy`/`make publish-complypack`
 # work out of the box without touching anything public. REGISTRY carries an
 # "http://" prefix (stripped by the publish scripts, which pass --plain-http/
@@ -18,34 +18,47 @@ PYTHON               ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,pytho
 # not complyctl itself. Pulled from the CUE Central Registry.
 GEMARA_SCHEMA_VERSION ?= v1.6.0
 
-.PHONY: validate test publish-policy publish-complypack build-image run-local run-image doctor coverage push-evidence sdr sdr-view
+.PHONY: config validate test publish-policy publish-complypack build-image run-local run-image doctor coverage push-evidence sdr sdr-view
 
-## Validate Gemara YAML against the upstream CUE schema (needs `cue` CLI).
+## Render .complytime/complytime.yaml from the gemara/*/ domains (gitignored).
+config:
+	$(PYTHON) scripts/render_complytime_config.py --registry $(REGISTRY) \
+	  --policy-version $(POLICY_VERSION) --complypack-version $(COMPLYPACK_VERSION)
+
+## Validate every domain's Gemara YAML and every mapping against the upstream
+## CUE schema (needs `cue` CLI).
 validate:
-	cue vet -c -d '#ControlCatalog' github.com/gemaraproj/gemara@$(GEMARA_SCHEMA_VERSION) gemara/change-management/controls.yaml
-	cue vet -c -d '#Policy' github.com/gemaraproj/gemara@$(GEMARA_SCHEMA_VERSION) gemara/change-management/policy.yaml
-	cue vet -c -d '#MappingDocument' github.com/gemaraproj/gemara@$(GEMARA_SCHEMA_VERSION) mappings/change-management-to-ksi.mapping.yaml
-	cue vet -c -d '#MappingDocument' github.com/gemaraproj/gemara@$(GEMARA_SCHEMA_VERSION) mappings/change-management-to-nist.mapping.yaml
+	@set -e; for d in gemara/*/; do \
+	  echo "cue vet $$d"; \
+	  cue vet -c -d '#ControlCatalog' github.com/gemaraproj/gemara@$(GEMARA_SCHEMA_VERSION) $${d}controls.yaml; \
+	  cue vet -c -d '#Policy' github.com/gemaraproj/gemara@$(GEMARA_SCHEMA_VERSION) $${d}policy.yaml; \
+	done; \
+	for m in mappings/*.mapping.yaml; do \
+	  echo "cue vet $$m"; \
+	  cue vet -c -d '#MappingDocument' github.com/gemaraproj/gemara@$(GEMARA_SCHEMA_VERSION) $$m; \
+	done
 	@echo "All Gemara YAML files are schema-valid."
 
 ## Run the policy test suite (Rego unit tests + pass/fail fixtures).
 test:
 	PYTHON=$(PYTHON) ./tests/run.sh
 
-## Publish the Gemara control catalog + policy as one OCI artifact.
+## Publish each domain's control catalog + policy as one OCI artifact.
 publish-policy:
-	./scripts/publish-policy-bundle.sh $(REGISTRY)/policies/change-management:$(POLICY_VERSION)
+	@set -e; for d in gemara/*/; do d=$$(basename $$d); \
+	  ./scripts/publish-policy-bundle.sh $$d $(REGISTRY)/policies/$$d:$(POLICY_VERSION); \
+	done
 
 ## Publish all domains' Rego (+ merged complytime-mapping.json) as one complypack.
 publish-complypack:
 	./scripts/publish-complypack.sh $(REGISTRY)/complypacks/rosa-seaplane:$(COMPLYPACK_VERSION)
 
 ## Build the ECS-ready container image (requires podman or docker).
-build-image:
+build-image: config
 	podman build -t $(IMAGE) -f containers/complyctl/Containerfile .
 
 ## Run evidence -> scan using locally installed complyctl + providers.
-run-local:
+run-local: config
 	RSC_EVIDENCE_DIR="$$(pwd)/evidence/output" RSC_REPO_ROOT="$$(pwd)" GITHUB_TOKEN=$${GITHUB_TOKEN:?set GITHUB_TOKEN} \
 	  $(PYTHON) containers/complyctl/entrypoint.py
 

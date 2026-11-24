@@ -13,7 +13,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${ROOT}"
 
-OPA_POLICY="opa/change-management/policy"
+# Prefer the local .venv (see requirements.txt) unless PYTHON is set.
+if [[ -z "${PYTHON:-}" && -x .venv/bin/python ]]; then PYTHON=.venv/bin/python; fi
+
+# Every domain's Rego: opa/<domain>/policy.
+POLICY_ARGS=()
+for d in opa/*/policy; do POLICY_ARGS+=(-p "${d}"); done
 # Match the conftest version baked into containers/complyctl/Containerfile.
 CONFTEST_IMAGE="${CONFTEST_IMAGE:-docker.io/openpolicyagent/conftest:v0.68.2}"
 
@@ -32,16 +37,17 @@ else
 fi
 
 echo "== Rego unit tests =="
-conftest verify -p "${OPA_POLICY}"
+conftest verify "${POLICY_ARGS[@]}"
 
 echo
-for AR in RSC.CMT.CTRL01.AR01 RSC.CMT.CTRL01.AR02; do
+for fix in tests/fixtures/*/; do
+  AR="$(basename "${fix}")"
   echo "== ${AR} fixture (compliant) must pass =="
-  conftest test "tests/fixtures/${AR}/pass.json" -p "${OPA_POLICY}" --all-namespaces
+  conftest test "tests/fixtures/${AR}/pass.json" "${POLICY_ARGS[@]}" --all-namespaces
 
   echo
   echo "== ${AR} fixture (violations) must fail =="
-  if conftest test "tests/fixtures/${AR}/fail.json" -p "${OPA_POLICY}" --all-namespaces >/dev/null 2>&1; then
+  if conftest test "tests/fixtures/${AR}/fail.json" "${POLICY_ARGS[@]}" --all-namespaces >/dev/null 2>&1; then
     echo "FAIL: ${AR} violations fixture was not denied" >&2
     exit 1
   fi
@@ -54,19 +60,23 @@ echo "== complypack: contract validation and fixture schema checks =="
 if ! command -v complypack >/dev/null 2>&1; then
   echo "SKIP: complypack not installed (go install github.com/complytime/complypack/cmd/complypack@latest)."
 else
-  # "<rego package file> <platform schema> <AR>"
-  while read -r REGO PLATFORM AR; do
+  # Each Rego file declares its platform schema in a "# platform: <name>"
+  # header and the AR it judges in its `applies` rule.
+  for REGO in opa/*/policy/*.rego; do
+    case "${REGO}" in *_test.rego) continue ;; esac
+    PLATFORM="$(sed -n 's/^# platform: //p' "${REGO}")"
+    AR="$(sed -n 's/.*input\.assessment_requirement == "\(.*\)"$/\1/p' "${REGO}")"
+    if [[ -z "${PLATFORM}" || -z "${AR}" ]]; then
+      echo "FAIL: ${REGO} needs a '# platform:' header and an 'applies' rule on assessment_requirement" >&2
+      exit 1
+    fi
     SCHEMA="${PLATFORM}=file://${ROOT}/schemas/${PLATFORM}.cue"
-    complypack validate-policy "${OPA_POLICY}/${REGO}.rego" --platform "${PLATFORM}" \
-      --schema "${SCHEMA}" --format text
+    complypack validate-policy "${REGO}" --platform "${PLATFORM}" --schema "${SCHEMA}" --format text
     for f in pass fail; do
-      complypack test-policy "${OPA_POLICY}/${REGO}.rego" --platform "${PLATFORM}" \
-        --schema "${SCHEMA}" --test-data "tests/fixtures/${AR}/${f}.json" --format text
+      complypack test-policy "${REGO}" --platform "${PLATFORM}" --schema "${SCHEMA}" \
+        --test-data "tests/fixtures/${AR}/${f}.json" --format text
     done
-  done <<'LIST'
-github_default_branch_protection github-branch-protection RSC.CMT.CTRL01.AR01
-github_default_branch_merge_review github-pr-merge-review RSC.CMT.CTRL01.AR02
-LIST
+  done
 fi
 
 echo

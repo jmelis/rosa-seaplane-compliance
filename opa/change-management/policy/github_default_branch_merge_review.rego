@@ -8,6 +8,7 @@
 # target's input_path, so each rule is guarded on the evidence's own
 # assessment_requirement (see github_default_branch_protection.rego).
 
+# platform: github-pr-merge-review
 package rosa_seaplane.change_management.github_default_branch_merge_review
 
 import rego.v1

@@ -35,6 +35,11 @@ def ar_texts() -> dict:
     return texts
 
 
+def policy_ids() -> list:
+    """complyctl policy IDs: one per control domain (gemara/<domain>/policy.yaml)."""
+    return sorted(p.parent.name for p in Path().glob(POLICY_GLOB))
+
+
 def policy_ars() -> list:
     """Every AR the policies assess, across all domains."""
     ars = []
@@ -96,13 +101,14 @@ def main() -> None:
 
     run(["complyctl", "get"])
     run(["complyctl", "doctor", "--format", "text"], check=False)
-    # No target name: scans every target configured for this policy.
+    # No target name: scans every target configured for the policy.
     # check=False: complyctl exits non-zero when any AR fails, which is a
     # finding to report, not a pipeline error.
-    run(
-        ["complyctl", "scan", "--policy-id", "change-management", "--format", "oscal,sarif,pretty"],
-        check=False,
-    )
+    for policy_id in policy_ids():
+        run(
+            ["complyctl", "scan", "--policy-id", policy_id, "--format", "oscal,sarif,pretty"],
+            check=False,
+        )
 
 
 if __name__ == "__main__":

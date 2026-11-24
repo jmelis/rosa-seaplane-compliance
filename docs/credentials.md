@@ -108,8 +108,8 @@ The Rego ships as a complypack, which complyctl itself fetches (with the same
 no patch.
 
 **Pointing at a real registry later:** change `REGISTRY`/`IMAGE_REGISTRY` in
-`Makefile` and the two refs in `.complytime/complytime.yaml` together (drop
-the `http://` prefix for a real TLS registry), then run `make publish-policy`
+`Makefile` (drop the `http://` prefix for a real TLS registry); `make config`
+re-renders `.complytime/complytime.yaml` from it. Then run `make publish-policy`
 / `make publish-complypack` from an authenticated session.
 
 ## Adding a new evidence source

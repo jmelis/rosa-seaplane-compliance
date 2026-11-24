@@ -79,7 +79,7 @@ Once everything below is installed once, the steady-state loop is just:
 
 ```bash
 make validate                  # optional: cue vet the Gemara YAML against upstream schema
-make publish-policy            # push L2 controls + L3 policy as an OCI bundle
+make publish-policy            # push each domain's L2 controls + L3 policy as an OCI bundle
 make publish-complypack        # push all domains' Rego as one complypack (opa evaluator)
 export GITHUB_TOKEN=ghp_...
 make run-local                 # collect evidence, then complyctl scan (the L4 run)
@@ -154,12 +154,12 @@ real artifact (or none); the command under "explore" lets you look at it
 natively, without any extra tooling beyond what's already installed.
 
 **`make validate`** — optional. No artifact: `cue vet` checks
-`gemara/change-management/{controls,policy}.yaml` and both
-`mappings/*.mapping.yaml` files against the upstream Gemara CUE schema,
+every `gemara/*/{controls,policy}.yaml` and every
+`mappings/*.mapping.yaml` file against the upstream Gemara CUE schema,
 pass/fail to stdout only.
 
-**`make publish-policy`** — pushes `gemara/change-management/{controls,policy}.yaml`
-as one OCI artifact to `localhost:5050/.../policies/change-management:v0.1.0`.
+**`make publish-policy`** — pushes each domain's `gemara/<domain>/{controls,policy}.yaml`
+as one OCI artifact, e.g. `localhost:5050/.../policies/change-management:v0.1.0`.
 The artifact lives in the registry, not your filesystem:
 ```bash
 oras pull --plain-http localhost:5050/rosa-seaplane-compliance/policies/change-management:v0.1.0 -o /tmp/policy-bundle
@@ -282,7 +282,10 @@ RSC_S3_BUCKET=rosa-seaplane-evidence RSC_S3_ENDPOINT_URL=http://localhost:9090 m
 - `opa/<domain>/policy/*.rego` the Rego checks, one package per AR (e.g. `github_default_branch_merge_review.rego` for `RSC.CMT.CTRL01.AR02`). Each only judges evidence whose `assessment_requirement` matches its AR, authored per domain but published together as one complypack.
 - `evidence/<AR-FQDN>.*` one executable collector per AR, named by its AR FQDN (e.g. `RSC.CMT.CTRL01.AR01.sh`), pulling that AR's raw evidence (GitHub via `gh api` today). The entrypoint runs every executable here.
 - `scripts/` `coverage.py`, the `publish-*.sh` helpers, and `push-evidence.sh` (evidence -> S3 locker).
-- `.complytime/complytime.yaml` complyctl runtime config (policy refs, target, variables).
+- `.complytime/complytime.yaml` complyctl runtime config, **generated** by `make config`
+  (`scripts/render_complytime_config.py`) from the `gemara/*/` domains; gitignored.
+  Adding a domain needs no config or Makefile edit, only an entry in `complypack.yaml`
+  `gemara.sources` (complypack has no glob support; `make test` fails if one is missing).
 - `containers/complyctl/` image bundling complyctl + both evaluators, for scheduled runs.
 
 ## Known gaps
