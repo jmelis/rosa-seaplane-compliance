@@ -19,10 +19,11 @@ mkdir -p "${OUT_DIR}"
 
 RAW="$(gh api "repos/${REPO}/branches/${BASE_REF}/protection")"
 
-jq --arg repo "${REPO}" \
+jq --arg ar "${AR_ID}" \
+  --arg repo "${REPO}" \
   --arg branch "${BASE_REF}" \
   --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  '{generated_at: $generated_at, repository: $repo, branch: $branch, protection: .}' \
+  '{assessment_requirement: $ar, generated_at: $generated_at, repository: $repo, branch: $branch, protection: .}' \
   <<<"${RAW}" >"${OUT_FILE}"
 
 echo "Wrote branch protection snapshot to ${OUT_FILE}" >&2

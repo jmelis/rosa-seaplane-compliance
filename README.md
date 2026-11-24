@@ -27,7 +27,7 @@ flowchart LR
     MAP["MappingDocument<br/>ARs to KSI / 800-53"]
     BASE["baselines/*.yaml<br/>required set"]
 
-    CTRL --> POL --> CC["L4 complyctl<br/>+ evaluators (e.g. ampel, opa)"]
+    CTRL --> POL --> CC["L4 complyctl<br/>+ evaluator (opa)"]
     CC -->|evaluates| TGT["target system"]
     CC --> LOG["L5 EvaluationLog<br/>(evidence)"]
 
@@ -44,7 +44,7 @@ flowchart LR
   framework-neutral, split into testable **assessment requirements (ARs)**.
   Nothing here names FedRAMP or NIST.
 - **Policy, Gemara L3** (`gemara/*/policy.yaml`): wires each AR to an
-  **evaluator** (`ampel` for configuration checks, `opa` for behavioural ones)
+  **evaluator** (`opa`, for both configuration and behavioural checks)
   and to the target system.
 - **Evaluation, Gemara L4:** complyctl runs the policy through those evaluators
   against the real repo.
@@ -104,15 +104,12 @@ local S3-compatible bucket — nothing public or real AWS required.
 pip3 install -r requirements.txt
 ```
 
-**2. Install complyctl, ampel, and most of the toolchain** (unpinned
+**2. Install complyctl and most of the toolchain** (unpinned
 `@latest` here; pin before relying on this for real evidence — see
 `containers/complyctl/Containerfile` for pinned versions):
 
 ```bash
 go install github.com/complytime/complyctl/cmd/complyctl@latest
-go install github.com/complytime/complytime-providers/cmd/ampel-provider@latest
-go install github.com/carabiner-dev/snappy@v0.2.4
-go install github.com/policylabs/ampel/cmd/ampel@v1.4.2  # moved from carabiner-dev/ampel at v1.5.0; >=1.4.2 required
 go install github.com/open-policy-agent/conftest@v0.68.2
 go install oras.land/oras/cmd/oras@latest
 ```
@@ -129,14 +126,12 @@ go build -o "$(go env GOPATH)/bin/opa-provider" ./cmd/opa-provider
 cd /path/to/rosa-seaplane-compliance
 ```
 
-**4. Install both providers where complyctl looks for them:**
+**4. Install the provider where complyctl looks for it:**
 
 ```bash
 mkdir -p "$HOME/.local/share/complytime/providers"
-cp "$(go env GOPATH)/bin/ampel-provider" "$HOME/.local/share/complytime/providers/complyctl-provider-ampel"
 cp "$(go env GOPATH)/bin/opa-provider" "$HOME/.local/share/complytime/providers/complyctl-provider-opa"
-chmod +x "$HOME/.local/share/complytime/providers/complyctl-provider-ampel" \
-         "$HOME/.local/share/complytime/providers/complyctl-provider-opa"
+chmod +x "$HOME/.local/share/complytime/providers/complyctl-provider-opa"
 # macOS only: complyctl looks in ~/Library/Application Support/complytime by
 # default; this repo's config assumes the Linux XDG path above instead.
 export XDG_DATA_HOME="$HOME/.local/share"
@@ -219,8 +214,7 @@ Failed` — those are real findings against the real repo, not broken tooling
   formatted human-readable summary of the same scan.
 
 There's also provider-internal state worth poking at:
-`.complytime/ampel/results/*.intoto.json` (the raw in-toto attestation +
-ampel's own eval results) and `.complytime/opa/policy/` (the pulled-and-cached
+`.complytime/opa/policy/` (the pulled-and-cached
 Rego bundle — same files as the `conftest pull` above, cached locally by the
 provider).
 
@@ -282,9 +276,7 @@ RSC_S3_BUCKET=rosa-seaplane-evidence RSC_S3_ENDPOINT_URL=http://localhost:9090 m
   files (NIST 800-53 guidance catalog, KSI control catalog, Class C policy)
   that the mapping/baseline IDs and required-sets above are checked against.
   Reference only — nothing in `scripts/` or `opa/` reads them directly.
-- `opa/<domain>/policy/*.rego` the Rego checks for `opa`-evaluated ARs (e.g. `github_default_branch_merge_review.rego` for `RSC.CMT.CTRL01.AR02`), authored per domain but published together as one project bundle.
-- `ampel/specs/*.yaml` custom snappy specs for `ampel`-evaluated ARs, when no snappy builtin matches what the AR actually describes (see `github-branch-protection.yaml`'s header comment).
-- `ampel/policies/<AR-FQDN>.json` the granular AMPEL policy (tenets) each `ampel`-evaluated AR is checked against, loaded via `.complytime/complytime.yaml`'s `ampel_policy_dir` global variable rather than shipped inside the OCI policy bundle.
+- `opa/<domain>/policy/*.rego` the Rego checks, one package per AR (e.g. `github_default_branch_merge_review.rego` for `RSC.CMT.CTRL01.AR02`). Each only judges evidence whose `assessment_requirement` matches its AR, authored per domain but published together as one project bundle.
 - `evidence/<AR-FQDN>.*` one executable collector per AR, named by its AR FQDN (e.g. `RSC.CMT.CTRL01.AR01.sh`), pulling that AR's raw evidence (GitHub via `gh api` today). The entrypoint runs every executable here.
 - `scripts/` `generate_rtm.py`, `coverage.py`, the `publish-*.sh` helpers, and `push-evidence.sh` (evidence -> S3 locker).
 - `.complytime/complytime.yaml` complyctl runtime config (policy refs, target, variables).
@@ -299,13 +291,6 @@ RSC_S3_BUCKET=rosa-seaplane-evidence RSC_S3_ENDPOINT_URL=http://localhost:9090 m
 - `RSC.CMT.CTRL01.AR02` does not detect admin-bypass merges (needs the org audit log API).
 - Containerfile tool versions are mostly `@latest`; pin before relying on this for real evidence.
 - `opa-provider` is upstream-flagged as testing-only.
-- `complyctl scan` (with no target name, or scanning all targets for a policy)
-  dispatches every evaluator against every target, not just the evaluator(s)
-  a target actually uses. With AR01 (ampel) and AR02 (opa) split across two
-  targets, this surfaces as non-fatal "N operational errors" noise in scan
-  output (each evaluator tried once against the other's target) and a
-  non-zero exit code even when every real per-target result is correct —
-  see `.complytime/complytime.yaml`'s comments for the full explanation.
 - The `opa-provider` release needs two fixes to work with this project's
   two-evaluator-per-policy setup (not yet upstreamed, parked for a PR):
   Generate hard-fails instead of skipping for a target with no
@@ -315,8 +300,7 @@ RSC_S3_BUCKET=rosa-seaplane-evidence RSC_S3_ENDPOINT_URL=http://localhost:9090 m
   `docs/credentials.md`'s OCI registry section.
 - complyctl's top-level `variables:` (global, as opposed to `targets[].variables`)
   are not expanded for `${ENV_VAR}` references — only target-scoped variables
-  are. `ampel_policy_dir` in `.complytime/complytime.yaml` is a relative path
-  to work around this; flag if you hit the same thing elsewhere.
+  are; flag if you hit this.
 
 ## Glossary
 
@@ -332,8 +316,7 @@ RSC_S3_BUCKET=rosa-seaplane-evidence RSC_S3_ENDPOINT_URL=http://localhost:9090 m
   `change-management`), certification-independent; one directory under `gemara/`.
 - **AR (Assessment Requirement):** a single testable condition under a control,
   e.g. `RSC.CMT.CTRL01.AR02`.
-- **Evaluator:** the complyctl provider plugin that runs a check: `ampel` for
-  configuration, `opa` for behavioural.
+- **Evaluator:** the complyctl provider plugin that runs a check (currently only `opa`).
 - **MappingDocument:** the file crosswalking ARs to one certification's
   requirement IDs (FedRAMP KSI, NIST 800-53).
 - **EvaluationLog:** Gemara L5, the record of a single evaluation run, one result

@@ -6,10 +6,11 @@
 // test-data loader decodes all numbers as float64, so CUE's strict `int`
 // kind rejects them even for whole-valued integers (e.g. 30 becomes a CUE
 // float literal, not an int literal).
-generated_at: string
-repository:   string
-base_ref:     string
-window_days:  number
+assessment_requirement: string
+generated_at:           string
+repository:             string
+base_ref:               string
+window_days:            number
 pull_requests: [...{
 	number:             number
 	merged_at:          string

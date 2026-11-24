@@ -6,6 +6,7 @@ FQDN it serves; the AR's text is looked up in gemara/*/controls.yaml for the log
 line. Assumes CWD is the repo root (true in the container at WORKDIR /workspace
 and locally via `make run-local`).
 """
+import json
 import os
 import subprocess
 import sys
@@ -15,6 +16,7 @@ import yaml
 
 EVIDENCE_DIR = Path("evidence")
 CATALOG_GLOB = "gemara/*/controls.yaml"
+POLICY_GLOB = "gemara/*/policy.yaml"
 
 
 def require_env(name: str, why: str) -> None:
@@ -33,13 +35,45 @@ def ar_texts() -> dict:
     return texts
 
 
+def policy_ars() -> list:
+    """Every AR the policies assess, across all domains."""
+    ars = []
+    for policy in sorted(Path().glob(POLICY_GLOB)):
+        doc = yaml.safe_load(policy.read_text()) or {}
+        for plan in doc.get("adherence", {}).get("assessment-plans", []):
+            ars.append(plan["requirement-id"])
+    return ars
+
+
+def missing_evidence(ars: list, evidence_dir: Path) -> list:
+    """ARs with no evidence file that declares itself evidence for that AR.
+
+    The Rego packages only judge evidence carrying their own
+    assessment_requirement, so an AR with no evidence yields no denials and
+    would look like a pass. It must fail the run instead.
+    """
+    missing = []
+    for ar in ars:
+        found = False
+        for f in sorted((evidence_dir / ar).glob("*.json")):
+            try:
+                found = json.loads(f.read_text()).get("assessment_requirement") == ar
+            except (ValueError, AttributeError):
+                found = False
+            if found:
+                break
+        if not found:
+            missing.append(ar)
+    return missing
+
+
 def run(cmd: list, check: bool = True) -> None:
     print(f"==> {' '.join(cmd)}", flush=True)
     subprocess.run(cmd, check=check)
 
 
 def main() -> None:
-    require_env("GITHUB_TOKEN", "required by the ampel evaluator and the evidence collectors (gh api).")
+    require_env("GITHUB_TOKEN", "required by the evidence collectors (gh api).")
     require_env("RSC_EVIDENCE_DIR", "the opa evaluator's input_path in .complytime/complytime.yaml references it directly.")
 
     texts = ar_texts()
@@ -53,14 +87,18 @@ def main() -> None:
         print(f"==> Collecting evidence for {label}", flush=True)
         subprocess.run([str(collector.resolve())], check=True)
 
+    missing = missing_evidence(policy_ars(), Path(os.environ["RSC_EVIDENCE_DIR"]))
+    if missing:
+        sys.exit(
+            "ERROR: no evidence collected for " + ", ".join(missing)
+            + "; refusing to scan, since missing evidence would look like a pass."
+        )
+
     run(["complyctl", "get"])
     run(["complyctl", "doctor", "--format", "text"], check=False)
-    # No target name: scans every target configured for this policy
-    # (rosa-seaplane-ampel and rosa-seaplane-opa) in one report.
-    # check=False: complyctl dispatches every evaluator against every target
-    # (see .complytime/complytime.yaml's comments), so it exits 1 on harmless
-    # "operational errors" cross-dispatch noise even when every real
-    # per-target result is correct and was written successfully.
+    # No target name: scans every target configured for this policy.
+    # check=False: complyctl exits non-zero when any AR fails, which is a
+    # finding to report, not a pipeline error.
     run(
         ["complyctl", "scan", "--policy-id", "change-management", "--format", "oscal,sarif,pretty"],
         check=False,
