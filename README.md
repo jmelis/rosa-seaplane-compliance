@@ -3,6 +3,9 @@
 A framework for proving ROSA Seaplane meets its security certifications (the
 first being FedRAMP Class C). New controls will be added through iteration.
 
+To run the verification and diagnose a failure, jump to
+[Run the verification and understand a failure](#run-the-verification-and-understand-a-failure).
+
 It is built on [Gemara](https://github.com/gemaraproj/gemara)'s layered model: a
 control is written once, in a certification-neutral way, and each certification is
 a thin mapping layer on top. From that, the framework produces:
@@ -106,6 +109,59 @@ you, look here first.
   bodies. This replaces GitHub's own "required reviews", which is why AR01 and AR02
   read Prow data. See "Known gaps" for what Prow does and does not enforce.
 
+## Run the verification and understand a failure
+
+Assumes the one-time setup in ["From scratch"](#from-scratch-one-full-local-run-step-by-step)
+(steps 1 to 6) is done. Each time you want to verify:
+
+```bash
+export XDG_DATA_HOME="$HOME/.local/share"   # macOS only: where complyctl looks for the provider
+export GITHUB_TOKEN=...                     # read-only; see docs/credentials.md
+podman start local-oci-registry             # the local registry from step 5
+
+make test && make validate                  # 1. is the repo itself sound? No credentials needed.
+make publish-policy publish-complypack      # 2. publish what the scan fetches (redo after editing any control, policy or Rego)
+make run-local                              # 3. collect evidence from the in-scope repos, then scan
+make coverage                               # 4. how far along is each KSI
+make sdr-view                               # 5. build output/sdr/index.html and open it in a browser
+```
+
+**Reading the result.** `make run-local` ends with one row per AR and a summary
+such as `2 requirements: 0 passed, 2 failed, 0 not applicable, 0 skipped, 0 errors`.
+- **Failed** is a finding: the check ran and the system does not meet the
+  requirement. It is not a pipeline error.
+- **errors > 0** is a problem with the pipeline itself (provider, config), not a
+  finding.
+- A repository that could not be reached is neither: it shows as missing scope
+  (`targets 6/7` in `make coverage KSI=<id>`), never as a pass.
+
+**If an AR failed, find out why.**
+
+```bash
+make why AR=RSC.CMT.CTRL01.AR02     # per-repository denials, and any repo the collector could not reach
+```
+
+The scan keeps only one message per AR, so `make why` re-reads the evidence files
+(`evidence/output/<AR>/<repo>.json`) with the same policies and lists every
+denial by repository. Then look at what the AR requires
+(`complypack requirements --catalog RSC.CMT.CTRL --config complypack.yaml --format text`),
+the check itself (`opa/<domain>/policy/<name>.rego`, named in the AR's page in the viewer), and
+the scan's own report (`.complytime/scan/report-*.md`).
+
+**If the run itself breaks, find your symptom.**
+
+| What you see | What it means | What to do |
+| :-- | :-- | :-- |
+| `make test` or `make validate` fails | The code or a catalog is broken. | Fix it first; the output names the file. |
+| `ERROR: GITHUB_TOKEN must be set`, or `Bad credentials (HTTP 401)` | Token missing, expired or revoked. | `gh api user` to check it; mint a new one per `docs/credentials.md`. |
+| `WARN: <AR>: could not collect <repo>: …` | One repo failed; the run continues and the repo shows as missing scope. | Read the reason. `Resource not accessible by personal access token` means the token lacks permission on that repo (`docs/credentials.md`). To retry just that collector: `RSC_EVIDENCE_DIR=$PWD/evidence/output ./evidence/<AR>.sh`. |
+| `no evidence collected for <AR>; refusing to scan` or `no repository could be collected` | A collector produced nothing, so the scan is refused (missing evidence would look like a pass). | Run that collector alone (above) and fix what it prints. |
+| `no providers found` | complyctl cannot find the `opa` provider. | Set `XDG_DATA_HOME` as above and install the provider (setup steps 3 and 4). |
+| Policy or complypack fetch errors | Registry down, or nothing published. | `curl localhost:5050/v2/_catalog`, then `make publish-policy publish-complypack`. |
+| Scan summary shows `errors` above 0 | Provider or configuration failure. | `.complytime/complyctl.log` and `complyctl doctor --format text`. |
+| `make coverage` shows `not run` under Scope | No collector manifests were written. | Run `make run-local` first. |
+| An AR fails and you think the policy is wrong | Either the check or the collector is mis-measuring. | Reproduce with a fixture in `tests/fixtures/<AR>/`, fix what it measures in the Rego or collector, run `make test`. Do not loosen a check to make it pass. |
+
 ## The mental model
 
 ```mermaid
@@ -185,15 +241,15 @@ make sdr-view                  # offline HTML viewer: AR trail + KSIs (output/sd
 
 ### From scratch: one full local run, step by step
 
-Everything below is verified end to end against the real
-`openshift-online/rosa-seaplane` repo, pushing to a local OCI registry and a
-local S3-compatible bucket — nothing public or real AWS required.
+Everything below is verified end to end against the 7 repositories in
+`config/scope.yaml`, pushing to a local OCI registry and a local S3-compatible
+bucket — nothing public or real AWS required.
 
 **1. Prerequisites:** `go` (1.23+), `podman` (or `docker`), `python3`+`pip3`,
 `aws` CLI, `gh` CLI, `jq`.
 
 ```bash
-pip3 install -r requirements.txt
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   # the Makefile uses .venv when present
 ```
 
 **2. Install complyctl and most of the toolchain** (unpinned

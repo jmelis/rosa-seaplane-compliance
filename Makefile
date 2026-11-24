@@ -23,7 +23,12 @@ PYTHON               ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,pytho
 # not complyctl itself. Pulled from the CUE Central Registry.
 GEMARA_SCHEMA_VERSION ?= v1.6.0
 
-.PHONY: env config validate test publish-policy publish-complypack build-image run-local run-image doctor coverage push-evidence sdr sdr-view trace
+.PHONY: why env config validate test publish-policy publish-complypack build-image run-local run-image doctor coverage push-evidence sdr sdr-view trace
+
+## Explain why an AR failed: per-evidence-file denials and unreached targets.
+## Usage: make why AR=RSC.CMT.CTRL01.AR02
+why:
+	./scripts/why.sh $(or $(AR),$(error set AR=<assessment requirement id>))
 
 ## Show the selected environment and which AWS profile variables are set.
 env:
