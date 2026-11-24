@@ -20,7 +20,7 @@ metadata:
     - id: fedramp-sp800-53-guidance
       title: "NIST SP 800-53 Rev 5 — FedRAMP KSI-Referenced Controls"
       version: "5.2.0"
-      url: mappings/vendor/fedramp/layer1-fedramp-sp80053.yaml
+      url: https://github.com/openshift-online/rosa-seaplane-compliance/blob/main/mappings/vendor/fedramp/layer1-fedramp-sp80053.yaml
 
 source-reference:
   reference-id: RSC.CMT.CTRL

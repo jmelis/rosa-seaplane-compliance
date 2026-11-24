@@ -28,14 +28,14 @@ controls:
 groups:
   - id: change-management
     title: Change Management
-    description: Reviewed, validated changes to rosa-seaplane repositories (FedRAMP KSI-CMT).
+    description: Reviewed, validated changes to rosa-seaplane repositories.
 metadata:
   id: RSC.CMT.CTRL
   type: ControlCatalog
   gemara-version: "1.0.0"
   description: >
     Change management controls for ROSA Seaplane. See mappings/ for how
-    RSC.CMT.CTRL01 maps to FedRAMP KSIs and NIST 800-53.
+    RSC.CMT.CTRL01 maps to external frameworks.
   version: 0.1.0
   author:
     id: rosa-seaplane-compliance

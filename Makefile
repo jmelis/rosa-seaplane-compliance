@@ -15,7 +15,7 @@ IMAGE                ?= $(IMAGE_REGISTRY)/complyctl-runner:latest
 # not complyctl itself. Pulled from the CUE Central Registry.
 GEMARA_SCHEMA_VERSION ?= v1.6.0
 
-.PHONY: validate test publish-policy publish-opa-bundle build-image run-local run-image doctor coverage coverage-ksi coverage-nist rtm-ksi rtm-nist push-evidence
+.PHONY: validate test publish-policy publish-opa-bundle build-image run-local run-image doctor coverage push-evidence
 
 ## Validate Gemara YAML against the upstream CUE schema (needs `cue` CLI).
 validate:
@@ -55,33 +55,10 @@ doctor:
 	complyctl doctor --format text
 
 ## Report KSI coverage: which required KSIs our ARs cover.
-coverage-ksi:
+coverage:
 	python3 scripts/coverage.py \
 	  --baseline mappings/fedramp-class-c.ksi.baseline.yaml \
 	  --mapping mappings/change-management-to-ksi.mapping.yaml
-
-## Report 800-53 coverage: which required controls our ARs cover.
-coverage-nist:
-	python3 scripts/coverage.py \
-	  --baseline mappings/fedramp-class-c.nist-800-53.baseline.yaml \
-	  --mapping mappings/change-management-to-nist.mapping.yaml
-
-## Both coverage views (KSI and 800-53).
-coverage: coverage-ksi coverage-nist
-
-## Generate the FedRAMP KSI Requirements Traceability Matrix (CSV, for the auditor).
-rtm-ksi:
-	python3 scripts/generate_rtm.py \
-	  --mapping mappings/change-management-to-ksi.mapping.yaml \
-	  --policy gemara/change-management/policy.yaml \
-	  --out rtm/change-management-to-ksi.csv
-
-## Generate the NIST 800-53 Requirements Traceability Matrix (CSV, supporting crosswalk).
-rtm-nist:
-	python3 scripts/generate_rtm.py \
-	  --mapping mappings/change-management-to-nist.mapping.yaml \
-	  --policy gemara/change-management/policy.yaml \
-	  --out rtm/change-management-to-nist.csv
 
 ## Push this run's evidence/output/ and .complytime/scan/ (the L5 EvaluationLog)
 ## to the shared evidence locker. Requires RSC_S3_BUCKET; see scripts/push-evidence.sh.
