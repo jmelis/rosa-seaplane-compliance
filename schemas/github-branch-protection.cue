@@ -5,11 +5,13 @@
 // required_approving_review_count uses `number` rather than `int`: complypack's
 // JSON test-data loader decodes all numbers as float64, so CUE's strict `int`
 // kind rejects them even for whole-valued integers.
-generated_at: string
-repository:   string
-branch:       string
+assessment_requirement: string
+generated_at:           string
+repository:             string
+branch:                 string
 protection: {
-	required_pull_request_reviews: {
+	// GitHub omits this key when no review requirement is configured.
+	required_pull_request_reviews?: {
 		required_approving_review_count: number
 		dismiss_stale_reviews?:          bool
 		require_code_owner_reviews?:     bool

@@ -11,7 +11,6 @@ section when a new evidence source shows up.
 Used by:
 - `evidence/RSC.CMT.CTRL01.AR01.sh` — `gh api repos/{repo}/branches/{branch}/protection`
 - `evidence/RSC.CMT.CTRL01.AR02.sh` — a GraphQL query over merged PRs
-- the `ampel` evaluator's `access_token` target variable (`.complytime/complytime.yaml`)
 
 Don't reuse your personal `gh auth token` for this — it carries whatever
 scopes your day-to-day admin session has. Create a token scoped to just this

@@ -14,11 +14,13 @@ compliant_pr := {
 }
 
 test_compliant_merges_pass if {
-	count(deny) == 0 with input as {"base_ref": "main", "pull_requests": [compliant_pr]}
+	count(deny) == 0 with input as {"assessment_requirement": "RSC.CMT.CTRL01.AR02", "repository": "openshift-online/example", "base_ref": "main", "pull_requests": [compliant_pr]}
 }
 
 test_unapproved_review_is_denied if {
 	violations := deny with input as {
+		"assessment_requirement": "RSC.CMT.CTRL01.AR02",
+		"repository": "openshift-online/example",
 		"base_ref": "main",
 		"pull_requests": [object.union(compliant_pr, {"review_decision": "REVIEW_REQUIRED"})],
 	}
@@ -28,6 +30,8 @@ test_unapproved_review_is_denied if {
 
 test_self_merge_is_denied if {
 	violations := deny with input as {
+		"assessment_requirement": "RSC.CMT.CTRL01.AR02",
+		"repository": "openshift-online/example",
 		"base_ref": "main",
 		"pull_requests": [object.union(compliant_pr, {"merged_by": "alice"})],
 	}
@@ -37,6 +41,8 @@ test_self_merge_is_denied if {
 
 test_failing_checks_is_denied if {
 	violations := deny with input as {
+		"assessment_requirement": "RSC.CMT.CTRL01.AR02",
+		"repository": "openshift-online/example",
 		"base_ref": "main",
 		"pull_requests": [object.union(compliant_pr, {"status_check_state": "FAILURE"})],
 	}
@@ -45,7 +51,27 @@ test_failing_checks_is_denied if {
 }
 
 test_empty_window_is_denied if {
-	violations := deny with input as {"base_ref": "main", "pull_requests": []}
+	violations := deny with input as {"assessment_requirement": "RSC.CMT.CTRL01.AR02", "repository": "openshift-online/example", "base_ref": "main", "pull_requests": []}
 	some msg in violations
 	contains(msg, "no merged pull requests found")
+}
+
+test_ignores_other_ars_evidence if {
+	count(deny) == 0 with input as {
+		"assessment_requirement": "RSC.CMT.CTRL01.AR01",
+		"repository": "openshift-online/example",
+		"branch": "main",
+		"protection": {},
+	}
+}
+
+test_deny_message_names_repo if {
+	violations := deny with input as {
+		"assessment_requirement": "RSC.CMT.CTRL01.AR02",
+		"repository": "openshift-online/example",
+		"base_ref": "main",
+		"pull_requests": [],
+	}
+	some msg in violations
+	contains(msg, "openshift-online/example")
 }

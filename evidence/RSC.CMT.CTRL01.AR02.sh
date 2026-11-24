@@ -47,7 +47,8 @@ RAW="$(gh api graphql -f query='
     }
   }' -f owner="${OWNER}" -f name="${NAME}" -f baseRefName="${BASE_REF}")"
 
-jq --arg repo "${REPO}" \
+jq --arg ar "${AR_ID}" \
+  --arg repo "${REPO}" \
   --arg base_ref "${BASE_REF}" \
   --argjson window_days "${WINDOW_DAYS}" \
   --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -55,6 +56,7 @@ jq --arg repo "${REPO}" \
   ($window_days * 86400) as $window_seconds
   | (now - $window_seconds | gmtime | strftime("%Y-%m-%dT%H:%M:%SZ")) as $cutoff
   | {
+      assessment_requirement: $ar,
       generated_at: $generated_at,
       repository: $repo,
       base_ref: $base_ref,
