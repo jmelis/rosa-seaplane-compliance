@@ -14,28 +14,39 @@
 ksi: KSI-IAM-SNU
 target-types: [aws-account]
 measures: >
-  [Proposed, pending review] For each in-scope AWS account of the environment, the
-  inventory of IAM users and the root user is read from the account's IAM credential
-  report, and every principal holding an active long-term access key is reported,
-  because services and automation are expected to authenticate with short-lived
-  credentials. The check treats every principal as potentially non-human, so a
-  long-term key on any of them is reported. Not yet measured: whether a long-term key
-  was used to authenticate in the evaluation window (a second, audit-log method is
-  planned), and non-AWS identities (GitHub tokens, Kubernetes service accounts).
+  [Proposed, pending review] For each in-scope AWS account of the environment, two
+  measures are taken. Configuration: the inventory of IAM users and the root user is
+  read from the account's IAM credential report, and every principal holding an
+  active long-term access key is reported. Behavior: for every long-term access key
+  that exists (active or inactive), CloudTrail event history is searched for events
+  made with that key during the evaluation window (30 days by default, at most the 90
+  days event history keeps), and any authentication with a long-term credential is
+  reported; the account's own last-used record for each key is cross-checked against
+  the audit log, and a disagreement is reported rather than passed. Services and
+  automation are expected to authenticate with short-lived credentials, so both a
+  standing key and a key that is really being used are the things to find. Known
+  limits, recorded in the evidence: keys deleted inside the window cannot be listed,
+  only management events are searched (not data-plane calls), and a session started
+  with a key is seen only as the call made with the key. Not yet measured: non-AWS
+  identities (GitHub tokens, Kubernetes service accounts).
 automation-verification: >
-  [Proposed, pending review] No human step is involved: a collector reads the
-  credential report through a read-only role, and a policy evaluates it. It is
-  accurate for what it measures because the report is AWS's own per-account listing of
-  principals and key state, the policy has unit tests and passing and failing
-  fixtures, and an unreadable or incomplete report is a collection error that is shown
-  as missing scope and is never read as a pass. It is not sufficient on its own: it
-  needs the planned audit-log method and coverage of non-AWS identities.
+  [Proposed, pending review] No human step is involved: collectors read the credential
+  report, the key inventory, IAM last-used data and CloudTrail event history through a
+  read-only role, and policies evaluate the normalized evidence. Each is accurate for
+  what it measures because the sources are AWS's own records, the policies have unit
+  tests and passing and failing fixtures, lookups are paced to the API's limits and
+  retried, and any lookup that fails, is throttled out, or disagrees with the account's
+  last-used record makes the result incomplete or suspect, which is reported and never
+  read as a pass. A key that cannot be found (deleted in the window) or a use the audit
+  log does not record is outside what they can see; the evidence states this. They
+  are not sufficient on their own: non-AWS identities are not covered.
 validation: >
-  [Proposed, pending review] The measure is validated by tests that must deny a failing
-  inventory and accept a clean one, by verifying that the read-only role can read the
-  report and cannot write, and by being able to reproduce any reported finding from the
-  collected evidence file. Cadence is planned daily and is currently run manually from
-  a developer laptop.
+  [Proposed, pending review] The measures are validated by tests that must deny a
+  failing inventory or a used long-term key and accept a clean one, by checking that
+  the read-only role can do the reads and cannot write, by the cross-check between IAM
+  last-used data and the audit log, and by being able to reproduce any reported finding
+  from the collected evidence file. Cadence is planned daily and is currently run
+  manually from a developer laptop.
 # A related control is "addressed" when one of the KSI's ARs maps to it, and
 # "open" unless decided here. Each decision needs a rationale:
 #   control-decisions:

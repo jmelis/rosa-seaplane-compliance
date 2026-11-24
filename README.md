@@ -307,7 +307,7 @@ file and the schema.
   logical account names, no IDs), `automation.yaml` (the automation exemption).
 - `opa/<domain>/policy/*.rego` the checks, one package per AR; each judges only
   evidence whose `assessment_requirement` is its own. Published together as one complypack.
-- `evidence/<AR>.sh` one collector per AR (GitHub via `gh api`, AWS via the IAM credential report), writing
+- `evidence/<AR>.sh` one collector per AR (GitHub via `gh api`, AWS via the IAM credential report and CloudTrail), writing
   `evidence/output/<AR>/<target>.json` plus a `manifest.json` of per-target
   `collected`/`error`. A target is a repo or an AWS account. One target failing never stops the others. Shared code in
   `evidence/lib/` (`aws.sh` for AWS targets).
@@ -337,10 +337,26 @@ file and the schema.
   relied on the exemption, and that its approval is pending until a person other
   than the proposer fills `approved-by`.
 
+## How the identity checks work
+
+`RSC.IAM.CTRL01` (KSI-IAM-SNU) has two checks per AWS account, each reading only through
+the read-only role:
+- **AR01** reads the IAM credential report and denies any principal holding an active
+  long-term access key.
+- **AR02** looks for use, without scanning the audit log (CloudTrail's lookup API returns 50
+  events per call at 2 calls per second, which would take hours). It lists the keys that
+  exist, asks CloudTrail for each key's events in the window (`RSC_WINDOW_DAYS`, default 30,
+  at most 90), stops at the first events found, and cross-checks IAM's own last-used record.
+  A lookup that fails, or a key IAM says was used that the audit log does not show, is denied,
+  never passed. The evidence keeps a trimmed sample of events, never IPs or full key ids.
+
 ## Known gaps
 
 - `gemara/change-management` is the only control domain.
 - AR02 does not detect admin-bypass merges (needs the org audit log API).
+- AR02 of the identity control cannot see keys deleted inside the window, calls the audit log
+  does not record (data-plane), or what a session did after it started. Reading the trail's S3
+  logs would remove those limits but needs access to the log bucket.
 - The scan records one result and one message per AR, not per target; `make why`
   recovers the per-target reasons from the evidence files.
 - Containerfile tool versions are partly `@latest`; pin before relying on this for real evidence.
