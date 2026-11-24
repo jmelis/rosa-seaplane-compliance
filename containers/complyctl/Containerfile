@@ -64,6 +64,7 @@ RUN chmod +x /home/complyctl/.local/share/complytime/providers/complyctl-provide
 WORKDIR /workspace
 COPY .complytime/complytime.yaml ./.complytime/complytime.yaml
 COPY gemara/ ./gemara/
+COPY config/ ./config/
 COPY evidence/ ./evidence/
 COPY mappings/ ./mappings/
 COPY containers/complyctl/entrypoint.py /usr/local/bin/entrypoint.py

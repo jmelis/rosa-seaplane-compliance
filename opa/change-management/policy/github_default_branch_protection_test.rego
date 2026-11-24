@@ -64,6 +64,19 @@ test_deny_message_names_repo if {
 	contains(msg, "openshift-online/example")
 }
 
+test_unprotected_branch_denied if {
+	violations := deny with input as {
+		"assessment_requirement": "RSC.CMT.CTRL01.AR01",
+		"repository": "openshift-online/example",
+		"branch": "main",
+		"protected": false,
+		"protection": {},
+	}
+	some msg in violations
+	contains(msg, "no branch protection")
+	count(violations) == 5
+}
+
 test_ignores_other_ars_evidence if {
 	count(deny) == 0 with input as {
 		"assessment_requirement": "RSC.CMT.CTRL01.AR02",

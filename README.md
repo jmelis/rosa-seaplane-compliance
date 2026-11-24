@@ -280,7 +280,7 @@ RSC_S3_BUCKET=rosa-seaplane-evidence RSC_S3_ENDPOINT_URL=http://localhost:9090 m
   rules dataset and SDR schemas. Only the dataset (`scripts/fedramp_data.py`) is
   read by code; the `layer*` files are legacy reference.
 - `opa/<domain>/policy/*.rego` the Rego checks, one package per AR (e.g. `github_default_branch_merge_review.rego` for `RSC.CMT.CTRL01.AR02`). Each only judges evidence whose `assessment_requirement` matches its AR, authored per domain but published together as one complypack.
-- `evidence/<AR-FQDN>.*` one executable collector per AR, named by its AR FQDN (e.g. `RSC.CMT.CTRL01.AR01.sh`), pulling that AR's raw evidence (GitHub via `gh api` today). The entrypoint runs every executable here.
+- `evidence/<AR-FQDN>.*` one executable collector per AR, named by its AR FQDN (e.g. `RSC.CMT.CTRL01.AR01.sh`), pulling that AR's raw evidence (GitHub via `gh api` today). The entrypoint runs every executable here. Each collects from every repo in `config/scope.yaml` into `evidence/output/<AR>/<repo>.json` plus a `manifest.json` of per-repo `collected`/`error` status (shared code in `evidence/lib/collect.sh`). One repo failing never stops the others.
 - `scripts/` `coverage.py`, the `publish-*.sh` helpers, and `push-evidence.sh` (evidence -> S3 locker).
 - `.complytime/complytime.yaml` complyctl runtime config, **generated** by `make config`
   (`scripts/render_complytime_config.py`) from the `gemara/*/` domains; gitignored.

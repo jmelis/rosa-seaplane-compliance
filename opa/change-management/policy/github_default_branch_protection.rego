@@ -18,6 +18,12 @@ applies if input.assessment_requirement == "RSC.CMT.CTRL01.AR01"
 
 deny contains msg if {
 	applies
+	input.protected == false
+	msg := sprintf("%s: %s has no branch protection configured", [input.repository, input.branch])
+}
+
+deny contains msg if {
+	applies
 	not review_required
 	msg := sprintf(
 		"%s: required_pull_request_reviews is missing, null, or required_approving_review_count is 0 on %s",

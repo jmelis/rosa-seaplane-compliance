@@ -3,6 +3,7 @@
   "generated_at": "2026-10-01T00:00:00Z",
   "repository": "openshift-online/rosa-seaplane",
   "branch": "main",
+  "protected": true,
   "protection": {
     "required_pull_request_reviews": {
       "required_approving_review_count": 1,

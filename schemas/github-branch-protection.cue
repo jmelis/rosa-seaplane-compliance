@@ -9,27 +9,31 @@ assessment_requirement: string
 generated_at:           string
 repository:             string
 branch:                 string
+// false when GitHub reports the branch as not protected at all; then
+// `protection` is empty.
+protected: bool
 protection: {
-	// GitHub omits this key when no review requirement is configured.
+	// GitHub omits keys that are not configured, and all of them when the branch
+	// is unprotected.
 	required_pull_request_reviews?: {
 		required_approving_review_count: number
 		dismiss_stale_reviews?:          bool
 		require_code_owner_reviews?:     bool
 	}
-	required_status_checks: null | {
+	required_status_checks?: null | {
 		strict:    bool
 		contexts: [...string]
 	}
-	enforce_admins: {
+	enforce_admins?: {
 		enabled: bool
 	}
-	allow_force_pushes: {
+	allow_force_pushes?: {
 		enabled: bool
 	}
-	allow_deletions: {
+	allow_deletions?: {
 		enabled: bool
 	}
-	required_linear_history: {
+	required_linear_history?: {
 		enabled: bool
 	}
 }

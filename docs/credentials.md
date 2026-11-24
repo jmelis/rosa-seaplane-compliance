@@ -12,6 +12,11 @@ Used by:
 - `evidence/RSC.CMT.CTRL01.AR01.sh` — `gh api repos/{repo}/branches/{branch}/protection`
 - `evidence/RSC.CMT.CTRL01.AR02.sh` — a GraphQL query over merged PRs
 
+Both run once per repository in `config/scope.yaml`, so the token must reach
+every one of them, including the private `rosa-seaplane-internal`. A repository
+the token cannot read does not stop the run: it is recorded as an `error` in
+that AR's `manifest.json` and shows up as missing scope in `make coverage`.
+
 Don't reuse your personal `gh auth token` for this — it carries whatever
 scopes your day-to-day admin session has. Create a token scoped to just this
 job instead.
@@ -24,12 +29,15 @@ job instead.
 3. **Resource owner:** `openshift-online` (the org that owns `rosa-seaplane`)
 4. **Expiration:** short-lived (e.g. 90 days) — this is a bot-style
    credential, rotate it rather than making it permanent
-5. **Repository access:** "Only select repositories" → `rosa-seaplane` only
-   (add other repos here only once a collector actually reads from them)
+5. **Repository access:** "Only select repositories" → every repository in
+   `config/scope.yaml`
 6. **Permissions → Repository permissions:**
    - Administration: **Read-only** (branch-protection reads are gated
      behind admin-read, not plain repo read)
    - Pull requests: **Read-only**
+   - Contents: **Read-only** (AR02 reads each merged PR's last commit and its
+     check state; without this, private repositories fail with "Resource not
+     accessible by personal access token")
    - Metadata: Read-only (auto-included, can't be unchecked)
    - Leave everything else "No access"
 7. Generate, copy the token (`github_pat_...`)
