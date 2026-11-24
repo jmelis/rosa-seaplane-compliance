@@ -8,9 +8,13 @@ gemara:
   sources:
     - source: file://gemara/change-management/controls.yaml
     - source: file://gemara/change-management/policy.yaml
+    - source: file://gemara/identity-access/controls.yaml
+    - source: file://gemara/identity-access/policy.yaml
 
 schemas:
   - platform: github-branch-protection
     source: file://schemas/github-branch-protection.cue
   - platform: github-pr-merge-review
     source: file://schemas/github-pr-merge-review.cue
+  - platform: principal-credentials
+    source: file://schemas/principal-credentials.cue

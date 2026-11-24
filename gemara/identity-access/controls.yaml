@@ -1,0 +1,42 @@
+title: ROSA Seaplane Identity and Access Control Catalog
+# Schema: #ControlCatalog (github.com/gemaraproj/gemara), stable layer.
+#
+# AR02 (behavior: no non-human principal authenticated with a long-term credential
+# in the evaluation window) is not defined yet: the audit-log collection it needs
+# is blocked on event volume. It is added here, with its collector, when unblocked.
+controls:
+  - id: RSC.IAM.CTRL01
+    title: Non-Human Principals Use No Long-Term Credentials
+    group: identity-access
+    objective: >
+      Services and automation authenticate with short-lived credentials, not
+      long-term keys, in configuration (AR01).
+    assessment-requirements:
+      - id: RSC.IAM.CTRL01.AR01
+        text: >
+          No non-human principal (service or automation identity) in an in-scope
+          account may hold an active long-term credential.
+        applicability:
+          - aws_accounts
+        state: Active
+    state: Active
+groups:
+  - id: identity-access
+    title: Identity and Access
+    description: Authentication methods for non-human principals in the in-scope accounts.
+metadata:
+  id: RSC.IAM.CTRL
+  type: ControlCatalog
+  gemara-version: "1.0.0"
+  description: >
+    Identity and access controls for ROSA Seaplane. See mappings/ for how
+    RSC.IAM.CTRL01 maps to external frameworks.
+  version: 0.1.0
+  author:
+    id: rosa-seaplane-compliance
+    name: ROSA Seaplane Compliance
+    type: Human
+  applicability-groups:
+    - id: aws_accounts
+      title: AWS Accounts
+      description: Controls that apply to the AWS accounts of an environment (central, regional, management).
