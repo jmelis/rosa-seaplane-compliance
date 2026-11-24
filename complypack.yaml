@@ -7,6 +7,7 @@ version: 0.1.0
 gemara:
   sources:
     - source: file://gemara/change-management/controls.yaml
+    - source: file://gemara/change-management/policy.yaml
 
 schemas:
   - platform: github-branch-protection

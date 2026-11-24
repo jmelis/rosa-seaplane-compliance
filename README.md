@@ -73,7 +73,7 @@ Once everything below is installed once, the steady-state loop is just:
 ```bash
 make validate                  # optional: cue vet the Gemara YAML against upstream schema
 make publish-policy            # push L2 controls + L3 policy as an OCI bundle
-make publish-opa-bundle        # push all domains' Rego as one project bundle (opa evaluator)
+make publish-complypack        # push all domains' Rego as one complypack (opa evaluator)
 export GITHUB_TOKEN=ghp_...
 make run-local                 # collect evidence, then complyctl scan (the L4 run)
                                #   (or: make build-image && make run-image)
@@ -103,18 +103,14 @@ pip3 install -r requirements.txt
 go install github.com/complytime/complyctl/cmd/complyctl@latest
 go install github.com/open-policy-agent/conftest@v0.68.2
 go install oras.land/oras/cmd/oras@latest
+go install github.com/complytime/complypack/cmd/complypack@latest
 ```
 
-**3. Build `opa-provider` from a patched checkout** — the stock release has
-two bugs this project's two-evaluator-per-policy setup hits (see
-`patches/README.md`):
+**3. Build the stock `opa-provider`** (v0.3.0 works unpatched; complyctl
+delivers the Rego as a complypack, so the provider needs no registry access):
 
 ```bash
-git clone https://github.com/complytime/complytime-providers.git /tmp/complytime-providers
-cd /tmp/complytime-providers
-git apply /path/to/rosa-seaplane-compliance/patches/opa-provider-local-dev-and-multi-target.patch
-go build -o "$(go env GOPATH)/bin/opa-provider" ./cmd/opa-provider
-cd /path/to/rosa-seaplane-compliance
+go install github.com/complytime/complytime-providers/cmd/opa-provider@v0.3.0
 ```
 
 **4. Install the provider where complyctl looks for it:**
@@ -161,13 +157,14 @@ oras pull --plain-http localhost:5050/rosa-seaplane-compliance/policies/change-m
 cat /tmp/policy-bundle/controls.yaml
 ```
 
-**`make publish-opa-bundle`** — same idea, but conftest's own OCI bundle
-format: all `opa/*/policy/*.rego` (minus `_test.rego`) plus the merged
-`complytime-mapping.json`, pushed to `.../opa-bundles/rosa-seaplane:v0.1.0`.
-Pull it back with `conftest`, not `oras`:
+**`make publish-complypack`** — packs all `opa/*/policy/*.rego` (minus
+`_test.rego`) plus the merged `complytime-mapping.json` into one complypack with
+`complypack pack` (validating against `complypack.yaml` first) and pushes it to
+`.../complypacks/rosa-seaplane:v0.1.0`. `make run-local` fetches it via the
+`complypacks:` entry in `.complytime/complytime.yaml`; after a run, the
+unpacked copy is in complyctl's cache:
 ```bash
-conftest pull --tls=false --policy /tmp/opa-bundle "oci://localhost:5050/rosa-seaplane-compliance/opa-bundles/rosa-seaplane:v0.1.0"
-ls /tmp/opa-bundle   # complytime-mapping.json, github_default_branch_merge_review.rego
+ls ~/.cache/complytime/complypacks/opa/*/content   # macOS: ~/Library/Caches/complytime/...
 ```
 
 **`make run-local`** (with `GITHUB_TOKEN` already exported from step 6) —
@@ -205,9 +202,8 @@ Failed` — those are real findings against the real repo, not broken tooling
   formatted human-readable summary of the same scan.
 
 There's also provider-internal state worth poking at:
-`.complytime/opa/policy/` (the pulled-and-cached
-Rego bundle — same files as the `conftest pull` above, cached locally by the
-provider).
+`.complytime/opa/` (the provider's generated scan
+config and raw conftest results).
 
 **`make push-evidence`** — copies everything from the `run-local` step
 (`evidence/output/` + `.complytime/scan/`) into
@@ -269,15 +265,8 @@ RSC_S3_BUCKET=rosa-seaplane-evidence RSC_S3_ENDPOINT_URL=http://localhost:9090 m
   domain; the baseline reflects the full Class C KSI set, so the gap is real
   work, not a stub.
 - `RSC.CMT.CTRL01.AR02` does not detect admin-bypass merges (needs the org audit log API).
-- Containerfile tool versions are mostly `@latest`; pin before relying on this for real evidence.
+- Containerfile tool versions are partly `@latest`; pin before relying on this for real evidence.
 - `opa-provider` is upstream-flagged as testing-only.
-- The `opa-provider` release needs two fixes to work with this project's
-  two-evaluator-per-policy setup (not yet upstreamed, parked for a PR):
-  Generate hard-fails instead of skipping for a target with no
-  `opa_bundle_ref`/complypack, and its `conftest pull` call has no plain-HTTP
-  passthrough (unlike complyctl's own `policies[].url`). Local development
-  currently needs a build of `opa-provider` from a patched checkout; see
-  `docs/credentials.md`'s OCI registry section.
 - complyctl's top-level `variables:` (global, as opposed to `targets[].variables`)
   are not expanded for `${ENV_VAR}` references — only target-scoped variables
   are; flag if you hit this.

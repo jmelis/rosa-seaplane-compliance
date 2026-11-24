@@ -2,32 +2,29 @@
 set -euo pipefail
 
 # Assembles every domain's Rego (opa/*/policy/*.rego) plus a single merged
-# complytime-mapping.json into one project-wide conftest OCI bundle and pushes
-# it. One bundle per target is what complyctl's opa provider expects
-# (opa_bundle_ref is a per-target variable).
+# complytime-mapping.json into one project-wide complypack (evaluator opa) and
+# pushes it with `complypack pack`. complyctl keeps one complypack per
+# evaluator, so all domains ship together.
 #
-# Staged flat (no "policy/" subdirectory): conftest's OCI bundle format
-# preserves whatever directory structure sits under --policy, so pushing a
-# "policy/" subfolder makes `conftest pull --policy <dir>` land content at
-# <dir>/policy/... instead of <dir>/... directly — breaking opa-provider's
-# expectation that complytime-mapping.json sits directly in the pulled
-# directory (cmd/opa-provider/generate/mapping.go's LoadMapping).
+# complypack.yaml (repo root) supplies the evaluator, version, gemara sources
+# and platform schemas; `pack` validates the policies against them first.
+# Unit tests (*_test.rego) are not shipped; tests/run.sh runs them.
 #
-# Requires: conftest, jq. Log in first if the target registry needs auth.
+# Requires: complypack, jq. Log in first if the target registry needs auth.
 #
 # An "http://" prefix on the ref opts into plain-HTTP (for a local/insecure
-# registry — see docs/credentials.md), mirroring the same convention
+# registry -- see docs/credentials.md), mirroring the same convention
 # complyctl itself uses for policies[].url.
-# Usage: ./scripts/publish-opa-bundle.sh <oci-ref>
+# Usage: ./scripts/publish-complypack.sh <oci-ref>
 
 INPUT_REF="${1:?usage: $0 <oci-ref>}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 REF="${INPUT_REF}"
-CONFTEST_FLAGS=()
+PACK_FLAGS=()
 if [[ "${REF}" == http://* ]]; then
   REF="${REF#http://}"
-  CONFTEST_FLAGS+=(--tls=false)
+  PACK_FLAGS+=(--plain-http)
 fi
 
 STAGE="$(mktemp -d)"
@@ -57,8 +54,8 @@ fi
 jq -s '{version: "1", mappings: (map(.mappings) | add)}' \
   "${mappings[@]}" >"${STAGE}/complytime-mapping.json"
 
-cd "${STAGE}"
-conftest push "${CONFTEST_FLAGS[@]}" --policy . "${REF}"
+cd "${REPO_ROOT}"
+complypack pack "${STAGE}" "${REF}" "${PACK_FLAGS[@]}"
 
 echo "Published ${INPUT_REF}"
-echo "Update .complytime/complytime.yaml's opa_bundle_ref target variable to match if this differs from what's there."
+echo "Update .complytime/complytime.yaml's complypacks url to match if this differs from what's there."

@@ -1,6 +1,6 @@
 # TODO: point at a real registry when this project has one; update here and
 # in .complytime/complytime.yaml together. Defaults to a local-only registry
-# (see docs/credentials.md) so `make publish-policy`/`make publish-opa-bundle`
+# (see docs/credentials.md) so `make publish-policy`/`make publish-complypack`
 # work out of the box without touching anything public. REGISTRY carries an
 # "http://" prefix (stripped by the publish scripts, which pass --plain-http/
 # --tls=false when they see it); IMAGE_REGISTRY has no scheme since image
@@ -8,14 +8,14 @@
 REGISTRY             ?= http://localhost:5050/rosa-seaplane-compliance
 IMAGE_REGISTRY        ?= localhost:5050/rosa-seaplane-compliance
 POLICY_VERSION       ?= v0.1.0
-OPA_BUNDLE_VERSION   ?= v0.1.0
+COMPLYPACK_VERSION   ?= v0.1.0
 IMAGE                ?= $(IMAGE_REGISTRY)/complyctl-runner:latest
 
 # Gemara CUE schema version to validate against; only affects `make validate`,
 # not complyctl itself. Pulled from the CUE Central Registry.
 GEMARA_SCHEMA_VERSION ?= v1.6.0
 
-.PHONY: validate test publish-policy publish-opa-bundle build-image run-local run-image doctor coverage push-evidence
+.PHONY: validate test publish-policy publish-complypack build-image run-local run-image doctor coverage push-evidence
 
 ## Validate Gemara YAML against the upstream CUE schema (needs `cue` CLI).
 validate:
@@ -33,9 +33,9 @@ test:
 publish-policy:
 	./scripts/publish-policy-bundle.sh $(REGISTRY)/policies/change-management:$(POLICY_VERSION)
 
-## Publish all domains' Rego (+ merged complytime-mapping.json) as one project bundle.
-publish-opa-bundle:
-	./scripts/publish-opa-bundle.sh $(REGISTRY)/opa-bundles/rosa-seaplane:$(OPA_BUNDLE_VERSION)
+## Publish all domains' Rego (+ merged complytime-mapping.json) as one complypack.
+publish-complypack:
+	./scripts/publish-complypack.sh $(REGISTRY)/complypacks/rosa-seaplane:$(COMPLYPACK_VERSION)
 
 ## Build the ECS-ready container image (requires podman or docker).
 build-image:

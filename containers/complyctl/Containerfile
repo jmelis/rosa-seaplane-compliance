@@ -25,20 +25,11 @@ WORKDIR /build
 ENV CGO_ENABLED=0 GOPATH=/build/go GOTOOLCHAIN=auto
 RUN dnf install -y git && dnf clean all
 
-# complyctl/opa-provider/gh are unpinned (@latest); pin before producing
-# evidence you'd submit anywhere. conftest version matches complyctl's own
-# QUICK_START.md.
-#
-# KNOWN GAP: upstream complytime-providers (as released) has an issue this
-# project hits in local development, tracked for an upstream PR, not yet
-# merged: opa-provider's `conftest pull` call has no plain-HTTP/insecure-TLS
-# passthrough at all (unlike complyctl's own policies[].url, which detects
-# plain-HTTP from an "http://" prefix) -- only relevant for local-registry
-# development, see docs/credentials.md. Until that patch lands, local
-# development needs an opa-provider built from a patched complytime-providers
-# checkout.
+# complyctl and gh are unpinned (@latest); pin before producing evidence you'd
+# submit anywhere. opa-provider v0.3.0 is the release verified to work
+# unpatched; conftest version matches complyctl's own QUICK_START.md.
 RUN go install github.com/complytime/complyctl/cmd/complyctl@latest && \
-    go install github.com/complytime/complytime-providers/cmd/opa-provider@latest && \
+    go install github.com/complytime/complytime-providers/cmd/opa-provider@v0.3.0 && \
     go install github.com/open-policy-agent/conftest@v0.68.2 && \
     go install github.com/cli/cli/v2/cmd/gh@latest && \
     go install oras.land/oras/cmd/oras@latest

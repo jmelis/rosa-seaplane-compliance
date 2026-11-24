@@ -50,6 +50,26 @@ for AR in RSC.CMT.CTRL01.AR01 RSC.CMT.CTRL01.AR02; do
 done
 
 echo
+echo "== complypack: contract validation and fixture schema checks =="
+if ! command -v complypack >/dev/null 2>&1; then
+  echo "SKIP: complypack not installed (go install github.com/complytime/complypack/cmd/complypack@latest)."
+else
+  # "<rego package file> <platform schema> <AR>"
+  while read -r REGO PLATFORM AR; do
+    SCHEMA="${PLATFORM}=file://${ROOT}/schemas/${PLATFORM}.cue"
+    complypack validate-policy "${OPA_POLICY}/${REGO}.rego" --platform "${PLATFORM}" \
+      --schema "${SCHEMA}" --format text
+    for f in pass fail; do
+      complypack test-policy "${OPA_POLICY}/${REGO}.rego" --platform "${PLATFORM}" \
+        --schema "${SCHEMA}" --test-data "tests/fixtures/${AR}/${f}.json" --format text
+    done
+  done <<'LIST'
+github_default_branch_protection github-branch-protection RSC.CMT.CTRL01.AR01
+github_default_branch_merge_review github-pr-merge-review RSC.CMT.CTRL01.AR02
+LIST
+fi
+
+echo
 echo "== Python unit tests =="
 python3 -I -m unittest discover -s tests/python -p 'test_*.py'
 

@@ -1,5 +1,5 @@
 # Unit tests for RSC.CMT.CTRL01.AR02. Run with `conftest verify` (or `make test`).
-# Not shipped in the opa bundle: scripts/publish-opa-bundle.sh skips *_test.rego.
+# Not shipped in the complypack: scripts/publish-complypack.sh skips *_test.rego.
 
 package rosa_seaplane.change_management.github_default_branch_merge_review
 

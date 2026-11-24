@@ -79,15 +79,15 @@ no-op local credentials, fine to keep in a shell history or a local
 
 ## OCI registry — not evidence collection, but part of the pipeline
 
-`make publish-policy` / `make publish-opa-bundle` push the Gemara policy and
-OPA/Rego bundles to `REGISTRY` (`Makefile`). **This defaults to a local-only
+`make publish-policy` / `make publish-complypack` push the Gemara policy and
+the OPA/Rego complypack to `REGISTRY` (`Makefile`). **This defaults to a local-only
 registry, not a public one** — nothing is published anywhere public unless
 you explicitly repoint `REGISTRY` at one and authenticate to it yourself
 (e.g. `podman login your-registry.example.com`). Publishing to a public
 registry is a deliberate, manual action, not something to automate casually.
 
 **Local registry** (the default — start it once, then `make publish-policy`
-and `make publish-opa-bundle` work as-is):
+and `make publish-complypack` work as-is):
 
 ```bash
 podman run -d --name local-oci-registry -p 5050:5000 docker.io/library/registry:2
@@ -95,30 +95,22 @@ podman run -d --name local-oci-registry -p 5050:5000 docker.io/library/registry:
 
 `REGISTRY`'s `http://` prefix is how both publish scripts and
 `.complytime/complytime.yaml` opt into plain-HTTP for this local registry —
-`scripts/publish-policy-bundle.sh`/`publish-opa-bundle.sh` strip it and pass
-`--plain-http`/`--tls=false` to `oras`/`conftest` respectively; complyctl
+`scripts/publish-policy-bundle.sh`/`publish-complypack.sh` strip it and pass
+`--plain-http` to `oras`/`complypack`; complyctl
 itself detects the same prefix on `policies[].url`
 (`internal/registry/client.go`'s `NewClient`) and strips it before building
 the actual OCI reference. There's no `plain-http: true` field on a
 `policies[]` entry — that key belongs to complypack.yaml's schema, not
 complyctl's.
 
-Pulling the opa/Rego bundle has one remaining rough edge: as shipped in
-`complytime-providers` v0.3.0, `opa-provider`'s own `conftest pull` call
-(`constructConftestPullCommand`) has **no way to pass `--tls=false` at
-all** — a real gap, not a configuration problem (pushing is fine; `conftest
-push` has always had the flag). We patched a local `complytime-providers`
-checkout to support the same `http://`-prefix convention as complyctl for
-`opa_bundle_ref`; that patch isn't upstream yet (parked, see
-`project_complypack-upstream-issue-parked.md`-style follow-up). Until it
-merges, running `complyctl scan` against the local registry needs a build of
-`opa-provider` from that patched fork, not the stock release — `complyctl
-get`/publishing work fine with the stock release either way.
+The Rego ships as a complypack, which complyctl itself fetches (with the same
+`http://` handling), so the stock `opa-provider` needs no registry access and
+no patch.
 
 **Pointing at a real registry later:** change `REGISTRY`/`IMAGE_REGISTRY` in
 `Makefile` and the two refs in `.complytime/complytime.yaml` together (drop
 the `http://` prefix for a real TLS registry), then run `make publish-policy`
-/ `make publish-opa-bundle` from an authenticated session.
+/ `make publish-complypack` from an authenticated session.
 
 ## Adding a new evidence source
 
