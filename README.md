@@ -111,7 +111,7 @@ pip3 install -r requirements.txt
 
 ```bash
 go install github.com/complytime/complyctl/cmd/complyctl@latest
-go install github.com/open-policy-agent/conftest@v0.68.2
+go install github.com/open-policy-agent/conftest@v0.71.1
 go install oras.land/oras/cmd/oras@latest
 go install github.com/complytime/complypack/cmd/complypack@latest
 ```
@@ -295,7 +295,8 @@ RSC_S3_BUCKET=rosa-seaplane-evidence RSC_S3_ENDPOINT_URL=http://localhost:9090 m
   per KSI reaching every in-scope target (see `make coverage`). `gemara/change-management`
   is still the only control domain.
 - `RSC.CMT.CTRL01.AR02` does not detect admin-bypass merges (needs the org audit log API).
-- `RSC.CMT.CTRL01.AR02` judges approval from a normalized `approved_by`, built by the collector from GitHub approving reviews and Prow `/lgtm` history (the team approves through Prow, so GitHub's review decision is mostly empty). A Prow approval counts only when both the `lgtm` and `approved` labels are present and a non-author, non-bot account has an unretracted `/lgtm` in a comment or review body. PRs where a bot applied its own labels (dependency-update bots) therefore have no human approver and are reported.
+- `RSC.CMT.CTRL01.AR01` is mechanism-neutral: the collector normalizes how approval is required (GitHub required reviews, or the Prow Tide merge bot's labels read from `openshift/release`) into `approval_gate`, and the policy judges two separate facts, that a gate exists and that GitHub enforces it. The team's gate is Tide's `lgtm` + `approved` labels, which GitHub does not enforce (no merge restrictions, `tide` is not a required status), so merges that skip it are possible; that is reported, as is administrator bypass.
+- `RSC.CMT.CTRL01.AR02` judges approval from a normalized `approved_by`, built by the collector from GitHub approving reviews and Prow `/lgtm` history (the team approves through Prow, so GitHub's review decision is mostly empty). A Prow approval counts only when both the `lgtm` and `approved` labels are present and a non-author, non-bot account has an unretracted `/lgtm` or `/approve` in a comment or review body made before the merge. PRs where a bot applied its own labels (dependency-update bots) therefore have no human approver and are reported.
 - Containerfile tool versions are partly `@latest`; pin before relying on this for real evidence.
 - `opa-provider` is upstream-flagged as testing-only.
 - complyctl's top-level `variables:` (global, as opposed to `targets[].variables`)

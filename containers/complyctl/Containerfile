@@ -30,7 +30,7 @@ RUN dnf install -y git && dnf clean all
 # unpatched; conftest version matches complyctl's own QUICK_START.md.
 RUN go install github.com/complytime/complyctl/cmd/complyctl@latest && \
     go install github.com/complytime/complytime-providers/cmd/opa-provider@v0.3.0 && \
-    go install github.com/open-policy-agent/conftest@v0.68.2 && \
+    go install github.com/open-policy-agent/conftest@v0.71.1 && \
     go install github.com/cli/cli/v2/cmd/gh@latest && \
     go install oras.land/oras/cmd/oras@latest
 

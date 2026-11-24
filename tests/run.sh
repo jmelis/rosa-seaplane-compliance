@@ -20,7 +20,7 @@ if [[ -z "${PYTHON:-}" && -x .venv/bin/python ]]; then PYTHON=.venv/bin/python; 
 POLICY_ARGS=()
 for d in opa/*/policy; do POLICY_ARGS+=(-p "${d}"); done
 # Match the conftest version baked into containers/complyctl/Containerfile.
-CONFTEST_IMAGE="${CONFTEST_IMAGE:-docker.io/openpolicyagent/conftest:v0.68.2}"
+CONFTEST_IMAGE="${CONFTEST_IMAGE:-docker.io/openpolicyagent/conftest:v0.71.1}"
 
 if [[ -n "${CONFTEST_BIN:-}" ]]; then
   conftest() { "${CONFTEST_BIN}" "$@"; }
