@@ -15,6 +15,7 @@
 # containers/complyctl/entrypoint.py fails the run when an AR has no evidence.
 
 # platform: github-branch-protection
+# schema: schemas/github-branch-protection.cue
 package rosa_seaplane.change_management.github_default_branch_protection
 
 import rego.v1

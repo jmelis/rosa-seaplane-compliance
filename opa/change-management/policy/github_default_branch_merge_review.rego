@@ -9,6 +9,7 @@
 # assessment_requirement (see github_default_branch_protection.rego).
 
 # platform: github-pr-merge-review
+# schema: schemas/github-pr-merge-review.cue
 package rosa_seaplane.change_management.github_default_branch_merge_review
 
 import rego.v1

@@ -173,7 +173,7 @@ def rollup_ksi(ksi_id: str, bucket: str, data: dict) -> dict:
     else:
         state = IN_PROGRESS
 
-    return {
+    row = {
         "id": ksi_id, "name": info["name"], "statement": info["statement"],
         "family": info["family"], "type": "auto" if bucket == "automatable" else "hybrid",
         "methods": methods, "methods_implemented": len(implemented),
@@ -181,6 +181,8 @@ def rollup_ksi(ksi_id: str, bucket: str, data: dict) -> dict:
         "scope_run": scope_run, "scope_full": scope_full,
         "has_record": record is not None, "narrative": narrative, "state": state,
     }
+    row["next"] = next_steps(row)
+    return row
 
 
 def rollup(data: dict, environment: str) -> dict:
@@ -243,6 +245,22 @@ def render_summary(roll: dict) -> str:
     return "\n".join(out)
 
 
+def next_steps(r: dict) -> list:
+    """What to do next for a KSI, as short imperative phrases."""
+    c = r["controls"]
+    nxt = []
+    short = REQUIRED_METHODS - min(r["methods_implemented"], REQUIRED_METHODS)
+    if short:
+        nxt.append(f"implement {short} more automated method{'s' if short > 1 else ''}")
+    if r["methods_implemented"] and not r["scope_full"]:
+        nxt.append("run the checks and reach all targets" if not r["scope_run"] else "reach all targets")
+    if c["open"]:
+        nxt.append(f"decide {len(c['open'])} open control{'s' if len(c['open']) > 1 else ''}")
+    if not r["narrative"]:
+        nxt.append("write the SDR explanations" if r["has_record"] else "add the KSI record")
+    return nxt
+
+
 def render_detail(r: dict) -> str:
     out = [f"{r['id']}  {r['name']}", r["statement"] or "", ""]
     out.append(f"Methods ({min(r['methods_implemented'], REQUIRED_METHODS)}/{REQUIRED_METHODS})")
@@ -262,16 +280,7 @@ def render_detail(r: dict) -> str:
         if c[label]:
             out.append(f"  {label:<15} {', '.join(c[label])}")
 
-    nxt = []
-    short = REQUIRED_METHODS - min(r["methods_implemented"], REQUIRED_METHODS)
-    if short:
-        nxt.append(f"implement {short} more automated method{'s' if short > 1 else ''}")
-    if r["methods_implemented"] and not r["scope_full"]:
-        nxt.append("run the checks and reach all targets" if not r["scope_run"] else "reach all targets")
-    if c["open"]:
-        nxt.append(f"decide {len(c['open'])} open control{'s' if len(c['open']) > 1 else ''}")
-    if not r["narrative"]:
-        nxt.append("write the SDR explanations" if r["has_record"] else "add the KSI record")
+    nxt = next_steps(r)
     out += ["", f"State: {r['state']}", "Next: " + ("; ".join(nxt) if nxt else "nothing; keep the checks running") + "."]
     return "\n".join(out)
 

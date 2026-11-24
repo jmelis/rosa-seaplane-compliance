@@ -183,3 +183,18 @@ class Rollup(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NextSteps(unittest.TestCase):
+    def test_rows_carry_next_steps(self):
+        row = roll_ksi(base_data(), "KSI-CMT-LMC")
+        self.assertEqual(row["next"], coverage.next_steps(row))
+        self.assertIn("implement 1 more automated method", row["next"])
+        self.assertIn("add the KSI record", row["next"])
+
+    def test_nothing_left(self):
+        d = base_data()
+        d["records"]["KSI-CMT-VTD"] = dict(FULL_RECORD, **{"control-decisions": decide_all_open(d["ksis"])})
+        ok = manifest(**{"org/a": "collected", "org/b": "collected"})
+        d["manifests"] = {AR1: ok, AR2: ok}
+        self.assertEqual(roll_ksi(d, "KSI-CMT-VTD")["next"], [])
