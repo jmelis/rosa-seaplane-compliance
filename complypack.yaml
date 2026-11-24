@@ -18,3 +18,5 @@ schemas:
     source: file://schemas/github-pr-merge-review.cue
   - platform: principal-credentials
     source: file://schemas/principal-credentials.cue
+  - platform: prowler-findings
+    source: file://schemas/prowler-findings.cue

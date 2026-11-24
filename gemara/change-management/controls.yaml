@@ -27,10 +27,29 @@ controls:
           - github_repositories
         state: Active
     state: Active
+  - id: RSC.CMT.CTRL02
+    title: Changes to the Cloud Environment Are Logged and Monitored
+    group: change-management
+    objective: >
+      Modifications to the cloud environment leave an audit record, and
+      someone is alerted if that logging is stopped or altered.
+    assessment-requirements:
+      - id: RSC.CMT.CTRL02.AR01
+        text: >
+          In every in-scope account, an audit log must record the modifications
+          made to the cloud environment in each region checked, and an alert must
+          exist for the logging itself being stopped or altered. It confirms that
+          the logging and the alert are configured; it does not cover alerts on
+          other kinds of change or whether anyone responds, and the evidence
+          states what was checked.
+        applicability:
+          - aws_accounts
+        state: Active
+    state: Active
 groups:
   - id: change-management
     title: Change Management
-    description: Reviewed, validated changes to rosa-seaplane repositories.
+    description: Reviewed, validated, logged and monitored changes to ROSA Seaplane.
 metadata:
   id: RSC.CMT.CTRL
   type: ControlCatalog
@@ -47,3 +66,6 @@ metadata:
     - id: github_repositories
       title: GitHub Repositories
       description: Controls that apply to rosa-seaplane repositories hosted on GitHub.
+    - id: aws_accounts
+      title: AWS Accounts
+      description: Controls that apply to the AWS accounts of an environment (central, regional, management).

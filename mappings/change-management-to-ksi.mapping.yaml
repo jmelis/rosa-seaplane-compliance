@@ -49,3 +49,17 @@ mappings:
       - entry-id: KSI-CMT-LMC
         strength: 7
         rationale: The per-merge review/status-check trail is the monitored record of modifications.
+
+  - id: RSC.CMT.MAP.KSI.M03
+    source: RSC.CMT.CTRL02.AR01
+    relationship: supports
+    targets:
+      - entry-id: KSI-CMT-LMC
+        strength: 6
+        rationale: >
+          Confirms that each in-scope account's audit log is on in every region
+          checked and records management write events (where modifications to
+          the environment appear), and that an alert exists for the logging itself
+          being stopped or altered. This is the configuration half of logging and
+          monitoring modifications. It does not cover alerts on other kinds of
+          change, or whether anyone responds to an alert.

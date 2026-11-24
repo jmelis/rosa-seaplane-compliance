@@ -8,6 +8,10 @@
     {
       "id": "rosa_seaplane.change_management.github_default_branch_merge_review",
       "requirement_id": "RSC.CMT.CTRL01.AR02"
+    },
+    {
+      "id": "rosa_seaplane.change_management.prowler_account_change_logging",
+      "requirement_id": "RSC.CMT.CTRL02.AR01"
     }
   ]
 }

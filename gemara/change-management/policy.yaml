@@ -33,6 +33,7 @@ scope:
     technologies:
       - GitHub
       - OpenShift Prow
+      - AWS CloudTrail
 
 imports:
   catalogs:
@@ -49,6 +50,21 @@ adherence:
           mode: Automated
           required: true
           description: opa/conftest evaluates the default branch's protection config against github_default_branch_protection.rego.
+          executor:
+            id: opa
+            name: opa-provider
+            type: Software
+            uri: https://github.com/complytime/complytime-providers/tree/main/cmd/opa-provider
+
+    - id: RSC.CMT.POL01.AP03
+      requirement-id: RSC.CMT.CTRL02.AR01
+      frequency: daily
+      evaluation-methods:
+        - id: RSC.CMT.POL01.AP03.EM01
+          type: Intent
+          mode: Automated
+          required: true
+          description: opa/conftest evaluates each account's audit-logging findings (collected with Prowler, config/prowler/checks.yaml) against prowler_account_change_logging.rego.
           executor:
             id: opa
             name: opa-provider

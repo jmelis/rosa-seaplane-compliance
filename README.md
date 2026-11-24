@@ -163,6 +163,7 @@ the scan's own report (`.complytime/scan/report-*.md`).
 | `ERROR: GITHUB_TOKEN must be set`, or `Bad credentials (HTTP 401)` | Token missing, expired or revoked. | `gh api user` to check it; mint a new one per `docs/credentials.md`. |
 | `WARN: <AR>: could not collect <repo>: …` | One repo failed; the run continues and the repo shows as missing scope. | Read the reason. `Resource not accessible by personal access token` means the token lacks permission on that repo (`docs/credentials.md`). To retry just that collector: `RSC_EVIDENCE_DIR=$PWD/evidence/output ./evidence/<AR>.sh`. |
 | `no evidence collected for <AR>; refusing to scan` or `no repository could be collected` | A collector produced nothing, so the scan is refused (missing evidence would look like a pass). | Run that collector alone (above) and fix what it prints. |
+| `Prowler X is installed but Y is pinned`, or `cannot run Prowler` | The Prowler collector needs the pinned version, found through `$RSC_PROWLER` or `PATH`. | Install it as in the one-time setup (step 5); to upgrade on purpose, read the changed checks, then change the pin in `config/prowler/checks.yaml`, the README and the tests together. |
 | `no providers found` | complyctl cannot find the `opa` provider. | Set `XDG_DATA_HOME` as above and install the provider (one-time setup, steps 3 and 4). |
 | Policy or complypack fetch errors | Registry down, or nothing published. | `curl localhost:5050/v2/_catalog`, then `make publish-policy publish-complypack`. |
 | Scan summary shows `errors` above 0 | Provider or configuration failure. | `.complytime/complyctl.log` and `complyctl doctor --format text`. |
@@ -232,14 +233,22 @@ credential.
    # default; this repo's config assumes the Linux XDG path above instead.
    export XDG_DATA_HOME="$HOME/.local/share"
    ```
-5. **Start the local registry and S3-compatible bucket:**
+5. **Install Prowler** (AWS configuration checks; open source, Apache-2.0, no account or key
+   needed). The version is pinned in `config/prowler/checks.yaml` and the collector
+   refuses any other. Keep it outside this repo (it needs Python below 3.14):
+   ```bash
+   uv venv --python 3.12 ~/.local/share/rsc-prowler
+   uv pip install --python ~/.local/share/rsc-prowler/bin/python "prowler==5.52.0"
+   export RSC_PROWLER=~/.local/share/rsc-prowler/bin/prowler
+   ```
+6. **Start the local registry and S3-compatible bucket:**
    ```bash
    podman run -d --name local-oci-registry -p 5050:5000 docker.io/library/registry:2
    podman run -d --name local-s3 -p 9090:9090 docker.io/adobe/s3mock:latest
    export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1
    aws --endpoint-url http://localhost:9090 s3 mb s3://rosa-seaplane-evidence
    ```
-6. **Set a scoped `GITHUB_TOKEN`** (`docs/credentials.md` says how; do not reuse a
+7. **Set a scoped `GITHUB_TOKEN`** (`docs/credentials.md` says how; do not reuse a
    broad personal token): `export GITHUB_TOKEN=github_pat_xxxxxxxx`
 
 ## Commands
@@ -250,7 +259,7 @@ credential.
 | `make validate` | `cue vet` of every `gemara/*/` file and every mapping against the upstream Gemara schema. | pass/fail |
 | `make publish-policy` | Pushes each domain's controls and policy to the registry as one OCI artifact each. | `oras pull --plain-http localhost:5050/rosa-seaplane-compliance/policies/change-management:v0.1.0 -o /tmp/policy-bundle` |
 | `make publish-complypack` | Packs every domain's Rego (minus tests) and the merged `complytime-mapping.json` into one complypack, validating first, and pushes it. | after a run: `ls ~/.cache/complytime/complypacks/opa/*/content` (macOS: `~/Library/Caches/complytime/...`) |
-| `make run-local` | Collects evidence from every repo in `config/scope.yaml` and every AWS account of the environment (read-only; needs the AWS access in `docs/credentials.md`), then `complyctl scan`. Renders `.complytime/complytime.yaml` first (`make config`). | `evidence/output/<AR>/<repo>.json` and `manifest.json`; in `.complytime/scan/`: `report-*.md` (readable), `evaluation-log-*.yaml` (L5), `assessment-results-*.json` (OSCAL), `scan-*.sarif.json` |
+| `make run-local` | Collects evidence from every repo in `config/scope.yaml` and every AWS account of the environment (read-only; needs the AWS access in `docs/credentials.md` and Prowler from the one-time setup), then `complyctl scan`. Renders `.complytime/complytime.yaml` first (`make config`). | `evidence/output/<AR>/<repo>.json` and `manifest.json`; in `.complytime/scan/`: `report-*.md` (readable), `evaluation-log-*.yaml` (L5), `assessment-results-*.json` (OSCAL), `scan-*.sarif.json` |
 | `make why AR=<id>` | Lists the per-repo denials for an AR and any repo the collector could not reach. | stdout |
 | `make push-evidence` | Copies `evidence/output/` and `.complytime/scan/` to the evidence locker under `s3://$RSC_S3_BUCKET/$RSC_S3_PREFIX/<run-timestamp>/`. Needs `RSC_S3_BUCKET` (and `RSC_S3_ENDPOINT_URL` for a local bucket). | `aws --endpoint-url "$RSC_S3_ENDPOINT_URL" s3 ls --recursive "s3://$RSC_S3_BUCKET/"` |
 | `make env` | Shows the selected environment (`RSC_ENV`, default `integration`) and whether each of its AWS accounts resolves from the platform's account snapshot. | stdout |
@@ -304,7 +313,8 @@ file and the schema.
   read by `scripts/fedramp_data.py`), the SDR schemas, and legacy `layer*` reference
   files that no code reads.
 - `config/` `scope.yaml` (repositories in scope), `environments/` (regions and
-  logical account names, no IDs), `automation.yaml` (the automation exemption).
+  logical account names, no IDs), `automation.yaml` (the automation exemption),
+  `aws/` (the read-only role), `prowler/checks.yaml` (which Prowler checks back which AR, and why).
 - `opa/<domain>/policy/*.rego` the checks, one package per AR; each judges only
   evidence whose `assessment_requirement` is its own. Published together as one complypack.
 - `evidence/<AR>.sh` one collector per AR (GitHub via `gh api`, AWS via the IAM credential report and CloudTrail), writing
@@ -350,6 +360,20 @@ the read-only role:
   A lookup that fails, or a key IAM says was used that the audit log does not show, is denied,
   never passed. The evidence keeps a trimmed sample of events, never IPs or full key ids.
 
+## How the change-logging check works
+
+`RSC.CMT.CTRL02.AR01` (KSI-CMT-LMC) asks, per AWS account, whether modifications to the
+environment are logged and whether anyone is alerted if that logging is stopped. It
+uses **Prowler** as the data source and lets Prowler's PASS/FAIL be the verdict for what
+its checks measure, under one rule: before a check is relied on, its meaning is read
+against the requirement. `config/prowler/checks.yaml` records that reading for all 16
+candidate checks (3 chosen, 13 left out, each with the reason) and what the chosen set
+does not cover. The Rego adds only what Prowler cannot say about itself: every required
+check must have a result, and "no result" or any status other than PASS or FAIL (such as
+MANUAL) is denied, never passed. Prowler runs through the read-only role, its version is
+pinned, and its raw output (IDs, ARNs, compliance text) is discarded: only the fields
+the policy needs are kept.
+
 ## Known gaps
 
 - `gemara/change-management` is the only control domain.
@@ -357,6 +381,7 @@ the read-only role:
 - AR02 of the identity control cannot see keys deleted inside the window, calls the audit log
   does not record (data-plane), or what a session did after it started. Reading the trail's S3
   logs would remove those limits but needs access to the log bucket.
+- The change-logging check confirms the audit log and one alert exist. It does not cover alerts on other kinds of change, who receives an alert, or other regions than the environment's; `config/prowler/checks.yaml` lists what was left out and why.
 - The scan records one result and one message per AR, not per target; `make why`
   recovers the per-target reasons from the evidence files.
 - Containerfile tool versions are partly `@latest`; pin before relying on this for real evidence.
