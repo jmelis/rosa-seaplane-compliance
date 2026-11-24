@@ -11,11 +11,14 @@ POLICY_VERSION       ?= v0.1.0
 COMPLYPACK_VERSION   ?= v0.1.0
 IMAGE                ?= $(IMAGE_REGISTRY)/complyctl-runner:latest
 
+# Prefer a local .venv (python3 -m venv .venv && .venv/bin/pip install -r requirements.txt).
+PYTHON               ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
+
 # Gemara CUE schema version to validate against; only affects `make validate`,
 # not complyctl itself. Pulled from the CUE Central Registry.
 GEMARA_SCHEMA_VERSION ?= v1.6.0
 
-.PHONY: validate test publish-policy publish-complypack build-image run-local run-image doctor coverage push-evidence
+.PHONY: validate test publish-policy publish-complypack build-image run-local run-image doctor coverage push-evidence sdr
 
 ## Validate Gemara YAML against the upstream CUE schema (needs `cue` CLI).
 validate:
@@ -27,7 +30,7 @@ validate:
 
 ## Run the policy test suite (Rego unit tests + pass/fail fixtures).
 test:
-	./tests/run.sh
+	PYTHON=$(PYTHON) ./tests/run.sh
 
 ## Publish the Gemara control catalog + policy as one OCI artifact.
 publish-policy:
@@ -44,7 +47,7 @@ build-image:
 ## Run evidence -> scan using locally installed complyctl + providers.
 run-local:
 	RSC_EVIDENCE_DIR="$$(pwd)/evidence/output" RSC_REPO_ROOT="$$(pwd)" GITHUB_TOKEN=$${GITHUB_TOKEN:?set GITHUB_TOKEN} \
-	  python3 containers/complyctl/entrypoint.py
+	  $(PYTHON) containers/complyctl/entrypoint.py
 
 ## Run the same loop inside the built container image.
 run-image:
@@ -57,9 +60,14 @@ doctor:
 ## KSI coverage rollup over `complypack coverage`. KSI=<id> for a drill-down.
 ## Also writes output/coverage.json.
 coverage:
-	python3 scripts/coverage.py $(if $(KSI),--ksi $(KSI))
+	$(PYTHON) scripts/coverage.py $(if $(KSI),--ksi $(KSI))
 
 ## Push this run's evidence/output/ and .complytime/scan/ (the L5 EvaluationLog)
 ## to the shared evidence locker. Requires RSC_S3_BUCKET; see scripts/push-evidence.sh.
 push-evidence:
 	./scripts/push-evidence.sh
+
+## Generate the FedRAMP Security Decision Record from coverage + the latest scan.
+## Writes output/sdr/sdr.json (gitignored: it describes real findings).
+sdr: coverage
+	$(PYTHON) scripts/generate_sdr.py

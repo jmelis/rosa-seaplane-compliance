@@ -87,6 +87,7 @@ make run-local                 # collect evidence, then complyctl scan (the L4 r
 export RSC_S3_BUCKET=... RSC_S3_ENDPOINT_URL=...
 make push-evidence              # push evidence/output/ + .complytime/scan/ to the evidence locker
 make coverage                  # the team's KSI coverage view
+make sdr                       # the FedRAMP Security Decision Record (output/sdr/sdr.json)
 ```
 
 ### From scratch: one full local run, step by step
@@ -226,6 +227,14 @@ aws --endpoint-url "$RSC_S3_ENDPOINT_URL" s3 cp "s3://$RSC_S3_BUCKET/.../scan/re
 methods, scope, controls, narrative and state. Also writes
 `output/coverage.json` (gitignored). `make coverage KSI=KSI-CMT-VTD` drills
 into one KSI and lists what to do next. Needs `complypack` installed.
+
+**`make sdr`** — runs `make coverage`, then transforms its output, the KSI
+records, the policies' planned cycle and the latest L5 results into
+`output/sdr/sdr.json`, validated against the vendored FedRAMP SDR schema.
+Failed results stay visible; an AR with no result is "not evaluated"; the
+assessor fields are left empty. Local paths, usernames, account IDs and raw
+evaluation messages are never written. The output is gitignored because it
+describes real findings. Needs the `.venv` (see `requirements.txt`).
 
 ## Where evidence goes
 
