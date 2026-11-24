@@ -1,6 +1,6 @@
 title: ROSA Seaplane Change Management Controls -> FedRAMP KSI
 # Schema: #MappingDocument. Not consumed by complyctl, used by
-# scripts/generate_rtm.py and scripts/coverage.py. KSI ids/version match
+# scripts/coverage.py. KSI ids/version match
 # mappings/vendor/fedramp/layer2-fedramp-ksi.yaml (fedramp-ksi-controls
 # v2026.1.0); re-sync from there if it moves on.
 metadata:
@@ -21,7 +21,7 @@ metadata:
     - id: fedramp-ksi-controls
       title: "FedRAMP 2026 Key Security Indicators — Class C Controls"
       version: "2026.1.0"
-      url: mappings/vendor/fedramp/layer2-fedramp-ksi.yaml
+      url: https://github.com/openshift-online/rosa-seaplane-compliance/blob/main/mappings/vendor/fedramp/layer2-fedramp-ksi.yaml
 
 source-reference:
   reference-id: RSC.CMT.CTRL

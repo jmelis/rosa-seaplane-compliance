@@ -5,12 +5,10 @@ first being FedRAMP Class C). New controls will be added through iteration.
 
 It is built on [Gemara](https://github.com/gemaraproj/gemara)'s layered model: a
 control is written once, in a certification-neutral way, and each certification is
-a thin mapping layer on top. From that, the framework produces the two artifacts
-an auditor relies on:
+a thin mapping layer on top. From that, the framework produces:
 
-1. **The RTM (Requirements Traceability Matrix):** for every requirement in a
-   certification (e.g. a NIST 800-53 control), which control satisfies
-   it and how it is evidenced.
+1. **The mappings:** for every requirement in a certification (e.g. a NIST 800-53
+   control), which control satisfies it and why.
 2. **The evidence:** the record of each evaluation, run against the live system
    via complytime, showing the controls actually held.
 
@@ -30,9 +28,6 @@ flowchart LR
     CTRL --> POL --> CC["L4 complyctl<br/>+ evaluators (e.g. ampel, opa)"]
     CC -->|evaluates| TGT["target system"]
     CC --> LOG["L5 EvaluationLog<br/>(evidence)"]
-
-    CTRL --> RTM["generate_rtm.py"]
-    MAP --> RTM --> RTMCSV["RTM (CSV)<br/>to auditors"]
 
     MAP --> COVSC["coverage.py"]
     BASE --> COVSC --> COV["coverage<br/>to the team"]
@@ -61,12 +56,9 @@ flowchart LR
 
 | Output | Built by | Audience | Shape |
 | :-- | :-- | :-- | :-- |
-| **RTM** (CSV) | `generate_rtm.py` | auditors | Per certification, a stable crosswalk derived from L2 controls + MappingDocument. Independent of any run. |
 | **Coverage** | `coverage.py` | the team | Per certification, which required requirements the ARs cover (MappingDocument vs baseline), and where the gaps still are. |
 
-They are deliberately separate: the RTM is the structural map that stays put
-between runs; coverage is the team's picture of how far along the work is.
-Neither needs an L5 EvaluationLog; both are derived from the authored YAML.
+Coverage needs no L5 EvaluationLog; it is derived from the authored YAML.
 
 ## Running an evaluation
 
@@ -87,8 +79,7 @@ make run-local                 # collect evidence, then complyctl scan (the L4 r
                                #   (or: make build-image && make run-image)
 export RSC_S3_BUCKET=... RSC_S3_ENDPOINT_URL=...
 make push-evidence              # push evidence/output/ + .complytime/scan/ to the evidence locker
-make rtm-ksi                   # the auditor-facing RTM (CSV)
-make coverage                  # the team's KSI + 800-53 coverage view
+make coverage                  # the team's KSI coverage view
 ```
 
 ### From scratch: one full local run, step by step
@@ -234,19 +225,8 @@ aws --endpoint-url "$RSC_S3_ENDPOINT_URL" s3 ls --recursive "s3://$RSC_S3_BUCKET
 aws --endpoint-url "$RSC_S3_ENDPOINT_URL" s3 cp "s3://$RSC_S3_BUCKET/.../scan/report-...-opa-....md" -   # stream one object without downloading
 ```
 
-**`make rtm-ksi`** — writes `rtm/change-management-to-ksi.csv` (gitignored,
-regenerated fresh each run) — columns `requirement_id, relationship,
-our_requirement_id, evidence_method, rationale, notes`, one row per
-AR-to-KSI mapping entry:
-```bash
-column -s, -t rtm/change-management-to-ksi.csv | less -S
-```
-(`make rtm-nist` is the same shape for the NIST 800-53 crosswalk, written to
-`rtm/change-management-to-nist.csv`.)
-
 **`make coverage`** — no file artifact. `coverage.py` only prints to stdout
-(unlike `generate_rtm.py`, it takes no `--out`); runs `coverage-ksi` then
-`coverage-nist` back to back. Redirect it yourself if you want to keep a
+(it takes no `--out`). Redirect it yourself if you want to keep a
 copy: `make coverage > /tmp/coverage-$(date +%s).txt`.
 
 ## Where evidence goes
@@ -257,7 +237,7 @@ Each run's raw evidence (`evidence/output/`) and L5 EvaluationLog
 (an S3 bucket) under a timestamped, append-only prefix
 (`s3://$RSC_S3_BUCKET/$RSC_S3_PREFIX/<run-timestamp>/`), so history survives
 between runs. Aggregating/verifying across runs still comes after that; this
-repo's job is the RTM, running the evaluation, and getting the evidence to
+repo's job is running the evaluation, and getting the evidence to
 the locker — not analyzing the locker's contents.
 
 Requires `RSC_S3_BUCKET` (and AWS credentials for it) in the environment.
@@ -286,16 +266,16 @@ RSC_S3_BUCKET=rosa-seaplane-evidence RSC_S3_ENDPOINT_URL=http://localhost:9090 m
 - `ampel/specs/*.yaml` custom snappy specs for `ampel`-evaluated ARs, when no snappy builtin matches what the AR actually describes (see `github-branch-protection.yaml`'s header comment).
 - `ampel/policies/<AR-FQDN>.json` the granular AMPEL policy (tenets) each `ampel`-evaluated AR is checked against, loaded via `.complytime/complytime.yaml`'s `ampel_policy_dir` global variable rather than shipped inside the OCI policy bundle.
 - `evidence/<AR-FQDN>.*` one executable collector per AR, named by its AR FQDN (e.g. `RSC.CMT.CTRL01.AR01.sh`), pulling that AR's raw evidence (GitHub via `gh api` today). The entrypoint runs every executable here.
-- `scripts/` `generate_rtm.py`, `coverage.py`, the `publish-*.sh` helpers, and `push-evidence.sh` (evidence -> S3 locker).
+- `scripts/` `coverage.py`, the `publish-*.sh` helpers, and `push-evidence.sh` (evidence -> S3 locker).
 - `.complytime/complytime.yaml` complyctl runtime config (policy refs, target, variables).
 - `containers/complyctl/` image bundling complyctl + both evaluators, for scheduled runs.
 
 ## Known gaps
 
-- Only 2 of 46 required KSIs and 5 of 302 required NIST 800-53 controls are
-  currently covered by a mapping (see `make coverage`) — `gemara/change-management`
-  is still the only control domain; the baselines now reflect the full Class C
-  required sets, so the gap is real work, not a stub.
+- Only 2 of 46 required KSIs are currently covered by a mapping (see
+  `make coverage`) — `gemara/change-management` is still the only control
+  domain; the baseline reflects the full Class C KSI set, so the gap is real
+  work, not a stub.
 - `RSC.CMT.CTRL01.AR02` does not detect admin-bypass merges (needs the org audit log API).
 - Containerfile tool versions are mostly `@latest`; pin before relying on this for real evidence.
 - `opa-provider` is upstream-flagged as testing-only.
@@ -340,8 +320,5 @@ RSC_S3_BUCKET=rosa-seaplane-evidence RSC_S3_ENDPOINT_URL=http://localhost:9090 m
   per AR.
 - **Baseline:** the required set of requirements for a certification; the
   denominator coverage measures against.
-- **RTM (Requirements Traceability Matrix):** per certification, the stable
-  crosswalk from each requirement to the control that satisfies it and how it is
-  evidenced; the auditor-facing artifact.
 - **KSI (Key Security Indicator):** a FedRAMP security outcome a provider must
   demonstrate, e.g. `KSI-CMT-VTD`.
