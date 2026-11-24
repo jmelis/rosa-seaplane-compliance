@@ -1,16 +1,45 @@
 # KSI record for KSI-IAM-SNU: the hand-written input to the SDR that cannot be derived
-# from the mappings, policy or scan results. Written by the engineer who
-# implements the KSI's checks, in the same PR, and reviewed by a person.
-# Leave a field empty until it is true; never write placeholder claims.
+# from the mappings, policy or scan results. Written by the engineer who implements
+# the KSI's checks, in the same PR, and reviewed by a person.
+#
+# PROPOSED: the text below was drafted by a model and is not yet reviewed. Each field
+# starts with "[Proposed, pending review]"; a person must read it against what is
+# implemented, edit it, and remove the marker, because assessors check that what is
+# documented matches what runs.
+#
+# Scope: this KSI also covers non-AWS identities (GitHub tokens, Kubernetes service
+# accounts, service-to-service authentication). Only AWS IAM is checked so far, so the
+# SDR status stays "Partially Implemented" until the rest is covered or deliberately
+# scoped out.
 ksi: KSI-IAM-SNU
 target-types: [aws-account]
-measures: ""
-automation-verification: ""
-validation: ""
+measures: >
+  [Proposed, pending review] For each in-scope AWS account of the environment, the
+  inventory of IAM users and the root user is read from the account's IAM credential
+  report, and every principal holding an active long-term access key is reported,
+  because services and automation are expected to authenticate with short-lived
+  credentials. The check treats every principal as potentially non-human, so a
+  long-term key on any of them is reported. Not yet measured: whether a long-term key
+  was used to authenticate in the evaluation window (a second, audit-log method is
+  planned), and non-AWS identities (GitHub tokens, Kubernetes service accounts).
+automation-verification: >
+  [Proposed, pending review] No human step is involved: a collector reads the
+  credential report through a read-only role, and a policy evaluates it. It is
+  accurate for what it measures because the report is AWS's own per-account listing of
+  principals and key state, the policy has unit tests and passing and failing
+  fixtures, and an unreadable or incomplete report is a collection error that is shown
+  as missing scope and is never read as a pass. It is not sufficient on its own: it
+  needs the planned audit-log method and coverage of non-AWS identities.
+validation: >
+  [Proposed, pending review] The measure is validated by tests that must deny a failing
+  inventory and accept a clean one, by verifying that the read-only role can read the
+  report and cannot write, and by being able to reproduce any reported finding from the
+  collected evidence file. Cadence is planned daily and is currently run manually from
+  a developer laptop.
 # A related control is "addressed" when one of the KSI's ARs maps to it, and
 # "open" unless decided here. Each decision needs a rationale:
 #   control-decisions:
-#     si-2:
+#     ia-5.2:
 #       decision: not-applicable   # or: inherited
 #       rationale: Why this control does not apply to this KSI.
 control-decisions: {}

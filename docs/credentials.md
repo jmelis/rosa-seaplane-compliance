@@ -129,6 +129,11 @@ make aws-role ACTION=delete YES=1
 `make env` shows the selected environment and whether each account resolves from the
 snapshot. Never use an admin profile for the checks themselves.
 
+**AWS collectors** (`evidence/*.sh` using `evidence/lib/aws.sh`) re-run themselves inside
+that temporary config, so `make run-local` needs nothing extra beyond the access above,
+and they use only the `rsc-<account>-ro` profiles. The container image does not support
+them yet (no SAML login, no sibling checkouts there).
+
 ## OCI registry — not evidence collection, but part of the pipeline
 
 `make publish-policy` / `make publish-complypack` push the Gemara policy and

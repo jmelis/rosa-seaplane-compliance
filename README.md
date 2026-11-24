@@ -250,7 +250,7 @@ credential.
 | `make validate` | `cue vet` of every `gemara/*/` file and every mapping against the upstream Gemara schema. | pass/fail |
 | `make publish-policy` | Pushes each domain's controls and policy to the registry as one OCI artifact each. | `oras pull --plain-http localhost:5050/rosa-seaplane-compliance/policies/change-management:v0.1.0 -o /tmp/policy-bundle` |
 | `make publish-complypack` | Packs every domain's Rego (minus tests) and the merged `complytime-mapping.json` into one complypack, validating first, and pushes it. | after a run: `ls ~/.cache/complytime/complypacks/opa/*/content` (macOS: `~/Library/Caches/complytime/...`) |
-| `make run-local` | Collects evidence from every repo in `config/scope.yaml`, then `complyctl scan`. Renders `.complytime/complytime.yaml` first (`make config`). | `evidence/output/<AR>/<repo>.json` and `manifest.json`; in `.complytime/scan/`: `report-*.md` (readable), `evaluation-log-*.yaml` (L5), `assessment-results-*.json` (OSCAL), `scan-*.sarif.json` |
+| `make run-local` | Collects evidence from every repo in `config/scope.yaml` and every AWS account of the environment (read-only; needs the AWS access in `docs/credentials.md`), then `complyctl scan`. Renders `.complytime/complytime.yaml` first (`make config`). | `evidence/output/<AR>/<repo>.json` and `manifest.json`; in `.complytime/scan/`: `report-*.md` (readable), `evaluation-log-*.yaml` (L5), `assessment-results-*.json` (OSCAL), `scan-*.sarif.json` |
 | `make why AR=<id>` | Lists the per-repo denials for an AR and any repo the collector could not reach. | stdout |
 | `make push-evidence` | Copies `evidence/output/` and `.complytime/scan/` to the evidence locker under `s3://$RSC_S3_BUCKET/$RSC_S3_PREFIX/<run-timestamp>/`. Needs `RSC_S3_BUCKET` (and `RSC_S3_ENDPOINT_URL` for a local bucket). | `aws --endpoint-url "$RSC_S3_ENDPOINT_URL" s3 ls --recursive "s3://$RSC_S3_BUCKET/"` |
 | `make env` | Shows the selected environment (`RSC_ENV`, default `integration`) and whether each of its AWS accounts resolves from the platform's account snapshot. | stdout |
@@ -259,7 +259,7 @@ credential.
 | `make sdr` | Builds the FedRAMP Security Decision Record from coverage, the KSI records, the policies' planned cycle and the latest L5 results; validated against the vendored schema. Failed results stay visible, an AR with no result is "not evaluated", assessor fields stay empty, and local paths, usernames, account IDs and raw messages are never written. | `output/sdr/sdr.json` |
 | `make trace` | Builds `output/trace.json`: every AR joined to what it evidences (KSIs, 800-53, any framework with a mapping file, each link with its rationale), its plan, collector, schema, Rego, fixtures, the targets reached, and its latest result. Fails, listing every problem, if a link does not resolve. | `output/trace.json` |
 | `make sdr-view` | Builds the trace, then renders one offline HTML page with two tabs: **Assessment requirements** (index plus a page per AR) and **KSIs** (overview, filterable list, page per KSI). | open `output/sdr/index.html` |
-| `make build-image` / `make run-image` | The same evidence-and-scan loop in a container, for scheduled runs. | |
+| `make build-image` / `make run-image` | The same evidence-and-scan loop in a container, for scheduled runs. GitHub collectors only: the AWS collectors need the SAML login and sibling checkouts that the image does not have yet. | |
 
 Everything under `output/`, `evidence/output/` and `.complytime/` is gitignored: it
 describes real findings, so do not publish it. The viewer has no external scripts,
@@ -307,10 +307,10 @@ file and the schema.
   logical account names, no IDs), `automation.yaml` (the automation exemption).
 - `opa/<domain>/policy/*.rego` the checks, one package per AR; each judges only
   evidence whose `assessment_requirement` is its own. Published together as one complypack.
-- `evidence/<AR>.sh` one collector per AR (GitHub via `gh api` today), writing
-  `evidence/output/<AR>/<repo>.json` plus a `manifest.json` of per-repo
-  `collected`/`error`. One repo failing never stops the others. Shared code in
-  `evidence/lib/`.
+- `evidence/<AR>.sh` one collector per AR (GitHub via `gh api`, AWS via the IAM credential report), writing
+  `evidence/output/<AR>/<target>.json` plus a `manifest.json` of per-target
+  `collected`/`error`. A target is a repo or an AWS account. One target failing never stops the others. Shared code in
+  `evidence/lib/` (`aws.sh` for AWS targets).
 - `schemas/` the evidence shapes. `tests/` unit tests and pass/fail fixtures.
 - `scripts/` coverage, SDR, trace and viewer generators, the publish and push helpers.
 - `.complytime/complytime.yaml` complyctl config, **generated** by `make config` from the domains; gitignored.

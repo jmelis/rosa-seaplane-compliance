@@ -94,7 +94,14 @@ def load_records(ksis: dict, record_dir: Path = RECORD_DIR) -> dict:
     return records
 
 
+PENDING_MARKER = "[Proposed, pending review]"
+
+
 def narrative_written(record: dict) -> bool:
-    """True when all three SDR explanations are non-empty."""
-    return all(str(record.get(k) or "").strip()
-               for k in ("measures", "automation-verification", "validation"))
+    """True when all three SDR explanations are non-empty and reviewed.
+
+    Text that still carries the pending-review marker was drafted but not yet read
+    by a person, so it does not count as written.
+    """
+    texts = [str(record.get(k) or "").strip() for k in ("measures", "automation-verification", "validation")]
+    return all(texts) and not any(PENDING_MARKER in t for t in texts)

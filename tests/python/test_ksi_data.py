@@ -64,6 +64,7 @@ class Records(unittest.TestCase):
         records = ksi_data.load_records(self.ksis)
         self.assertEqual(sorted(records), ["KSI-CMT-VTD", "KSI-IAM-SNU"])
         for r in records.values():
+            # Empty or still marked "[Proposed, pending review]": neither counts as written.
             self.assertFalse(ksi_data.narrative_written(r))
 
     def test_valid_decision_normalized(self):
@@ -98,6 +99,13 @@ class Records(unittest.TestCase):
         r["status"] = "done"
         with self.assertRaises(ksi_data.RecordError):
             ksi_data.validate_record(r, self.ksis)
+
+    def test_unreviewed_text_does_not_count_as_written(self):
+        r = self.rec()
+        r.update({"measures": "[Proposed, pending review] a", "automation-verification": "b", "validation": "c"})
+        self.assertFalse(ksi_data.narrative_written(r))
+        r["measures"] = "a"
+        self.assertTrue(ksi_data.narrative_written(r))
 
     def test_narrative_written(self):
         r = self.rec()
