@@ -150,3 +150,47 @@ class Sdr(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AutomationSummary(unittest.TestCase):
+    """How many merges relied on the documented automation exemption is always stated."""
+
+    def write(self, root: Path, ar: str, name: str, summary):
+        d = root / ar
+        d.mkdir(parents=True, exist_ok=True)
+        (d / name).write_text(json.dumps({"summary": summary} if summary is not None else {}))
+
+    def test_sums_over_targets_and_skips_manifest_and_files_without_a_summary(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self.write(root, tc.AR2, "a.json", {"merged": 10, "automation_exempt": 4, "exemption_approved": False})
+            self.write(root, tc.AR2, "b.json", {"merged": 5, "automation_exempt": 1, "exemption_approved": False})
+            self.write(root, tc.AR2, "manifest.json", {"merged": 999, "automation_exempt": 999, "exemption_approved": True})
+            self.write(root, tc.AR1, "a.json", None)  # AR01 evidence has no summary
+            out = generate_sdr.load_automation_summary(root)
+            self.assertEqual(out, {tc.AR2: {"merged": 15, "automation_exempt": 5, "exemption_approved": False}})
+
+    def test_approved_only_if_every_target_says_so(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self.write(root, tc.AR2, "a.json", {"merged": 1, "automation_exempt": 1, "exemption_approved": True})
+            self.write(root, tc.AR2, "b.json", {"merged": 1, "automation_exempt": 0, "exemption_approved": False})
+            self.assertIs(generate_sdr.load_automation_summary(root)[tc.AR2]["exemption_approved"], False)
+
+    def test_sentence_says_pending_until_approved(self):
+        pending = generate_sdr.automation_sentence({"merged": 20, "automation_exempt": 7, "exemption_approved": False})
+        self.assertIn("7 of 20", pending)
+        self.assertIn("approval pending", pending)
+        done = generate_sdr.automation_sentence({"merged": 20, "automation_exempt": 7, "exemption_approved": True})
+        self.assertIn("(approved)", done)
+        self.assertEqual(generate_sdr.automation_sentence(None), "")
+        self.assertEqual(generate_sdr.automation_sentence({"merged": 0, "automation_exempt": 0, "exemption_approved": False}), "")
+
+    def test_sdr_evidence_text_carries_the_count(self):
+        d, roll = make_coverage()
+        automation = {tc.AR2: {"merged": 30, "automation_exempt": 9, "exemption_approved": False}}
+        sdr = generate_sdr.build_sdr(roll, d["records"], FREQS, results_from_log(), NOW, automation)
+        text = " ".join(x["evidenceText"] for x in next(k for k in sdr["keySecurityIndicators"] if k["ksiId"] == "KSI-CMT-VTD")["ksiEvidence"])
+        self.assertIn("9 of 30 merged PRs counted as approved by automation", text)
+        generate_sdr.validate_sdr(sdr)
+        self.assertEqual(generate_sdr.find_leaks(json.dumps(sdr)), [])

@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+import sys
+sys.path.insert(0, str(ROOT / "evidence/lib"))
 AR1, AR2 = "RSC.CMT.CTRL01.AR01", "RSC.CMT.CTRL01.AR02"
 
 # A stand-in for `gh` keyed on the repository name: *ok* works, *unprot* is a
@@ -52,12 +54,12 @@ def user(login, bot=False):
     return {"login": login, "__typename": "Bot" if bot else "User"}
 
 
-def pr(number, author="alice", author_bot=False, labels=(), comments=(), reviews=(), opinionated=(), at=None, truncated=False):
+def pr(number, author="alice", author_bot=False, merged_by="openshift-merge-bot", commits=(), labels=(), comments=(), reviews=(), opinionated=(), at=None, truncated=False):
     """A GraphQL pull request node. comments/reviews are (login, body[, time])."""
     t = at or now()
     return {
         "number": number, "mergedAt": t, "updatedAt": t,
-        "author": user(author, author_bot), "mergedBy": {"login": "openshift-merge-bot"},
+        "author": user(author, author_bot), "mergedBy": {"login": merged_by},
         "labels": {"nodes": [{"name": n} for n in labels]},
         "latestOpinionatedReviews": {"nodes": [{"state": st, "author": user(a)} for a, st in opinionated]},
         "comments": {"pageInfo": {"hasNextPage": truncated},
@@ -67,6 +69,8 @@ def pr(number, author="alice", author_bot=False, labels=(), comments=(), reviews
                     "nodes": [{"author": user(r[0]), "body": r[1], "submittedAt": r[2] if len(r) > 2 else "2026-01-01T00:00:00Z"}
                               for r in reviews]},
         "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]},
+        "allCommits": {"totalCount": len(commits), "nodes": [
+            {"commit": {"author": {"user": {"login": c[0]} if c[0] else None}, "signature": {"isValid": c[1]}}} for c in commits]},
     }
 
 
@@ -92,10 +96,10 @@ class Collectors(unittest.TestCase):
     def graphql(self, name, body):
         (self.fake_dir / f"{name}.json").write_text(json.dumps(body))
 
-    def run_collector(self, ar, repos):
+    def run_collector(self, ar, repos, extra_env=None):
         env = dict(os.environ, PATH=f"{self.tmp.name}/bin:{os.environ['PATH']}", GITHUB_TOKEN="x",
                    RSC_REPOS=" ".join(repos), RSC_EVIDENCE_DIR=str(self.out), RSC_BASE_REF="main",
-                   RSC_ENV="integration", FAKE_GH_DIR=str(self.fake_dir))
+                   RSC_ENV="integration", FAKE_GH_DIR=str(self.fake_dir), **(extra_env or {}))
         return subprocess.run([str(ROOT / "evidence" / f"{ar}.sh")], env=env, capture_output=True, text=True)
 
     def manifest(self, ar):
@@ -370,3 +374,124 @@ class Retry(unittest.TestCase):
     def test_4xx_is_not_retried(self):
         script = ('n=$(mktemp); rsc_retry bash -c "echo x >> $n; echo gh: HTTP 404 >&2; exit 1"; echo calls=$(grep -c x $n)')
         self.assertIn("calls=1", self.run_retry(script).stdout)
+
+
+BOT_TIDE = """tide:
+  queries:
+  - author: dep-bot[bot]
+    labels: [approved, lgtm]
+    repos: [o/ok-x]
+  - labels: [approved, lgtm, jira/valid-reference]
+    repos: [o/ok-x]
+"""
+
+
+class AutomationExemption(unittest.TestCase):
+    """The facts the collector reports for the documented automation exemption."""
+
+    LABELS = ("lgtm", "approved")
+
+    def collect(self, node, tide=BOT_TIDE, config=None):
+        c = Collectors("test_one_failing_repo_does_not_stop_the_others")
+        c.setUp()
+        self.addCleanup(c.tmp.cleanup)
+        c.graphql("ok-x", page([node]))
+        (c.fake_dir / "prow").mkdir()
+        (c.fake_dir / "prow" / "o__ok-x___prowconfig.yaml").write_text(tide)
+        cfg = c.fake_dir / "automation.yaml"
+        cfg.write_text(config or AUTOMATION_YAML)
+        res = c.run_collector(AR2, ["o/ok-x"], extra_env={"RSC_AUTOMATION_CONFIG": str(cfg)})
+        self.assertEqual(res.returncode, 0, res.stderr)
+        doc = json.loads((c.out / AR2 / "ok-x.json").read_text())
+        return doc["pull_requests"][0], doc["summary"]
+
+    def good(self, **kw):
+        base = dict(author="dep-bot", author_bot=True, labels=self.LABELS, commits=[("dep-bot[bot]", True)])
+        base.update(kw)
+        return pr(1, **base)
+
+    FACTS = ("author_allowlisted", "gate_defined", "gate_labels_present", "merged_by_merge_automation", "all_commits_by_author")
+
+    def test_all_five_facts_hold(self):
+        p, summary = self.collect(self.good())
+        self.assertEqual({k: p["automated_change"][k] for k in self.FACTS}, {k: True for k in self.FACTS})
+        self.assertEqual((summary["merged"], summary["automation_exempt"]), (1, 1))
+        self.assertIs(summary["exemption_approved"], False)  # nobody has approved the exemption yet
+
+    def test_each_fact_can_fail_independently(self):
+        cases = {
+            "author_allowlisted": self.good(author="other-bot", commits=[("other-bot[bot]", True)]),
+            "gate_defined": self.good(),  # handled below with a Tide config lacking the author
+            "gate_labels_present": self.good(labels=("lgtm",)),
+            "merged_by_merge_automation": self.good(merged_by="dana"),
+            "all_commits_by_author": self.good(commits=[("dep-bot[bot]", True), ("alice", True)]),
+        }
+        for fact, node in cases.items():
+            tide = TIDE if fact == "gate_defined" else BOT_TIDE
+            p, summary = self.collect(node, tide=tide)
+            self.assertIs(p["automated_change"][fact], False, fact)
+            self.assertEqual(summary["automation_exempt"], 0, fact)
+
+    def test_unsigned_commit_fails_the_commit_fact(self):
+        p, _ = self.collect(self.good(commits=[("dep-bot[bot]", False)]))
+        self.assertIs(p["automated_change"]["all_commits_by_author"], False)
+
+    def test_commit_with_no_linked_account_fails_the_commit_fact(self):
+        p, _ = self.collect(self.good(commits=[(None, True)]))
+        self.assertIs(p["automated_change"]["all_commits_by_author"], False)
+
+    def test_more_commits_than_were_fetched_fails_the_commit_fact(self):
+        node = self.good()
+        node["allCommits"]["totalCount"] = 150
+        p, _ = self.collect(node)
+        self.assertIs(p["automated_change"]["all_commits_by_author"], False)
+
+    def test_no_commits_fails_the_commit_fact(self):
+        p, _ = self.collect(self.good(commits=[]))
+        self.assertIs(p["automated_change"]["all_commits_by_author"], False)
+
+    def test_bot_suffix_is_ignored_when_comparing_logins(self):
+        p, _ = self.collect(self.good(author="dep-bot", commits=[("dep-bot", True)]))
+        self.assertIs(p["automated_change"]["all_commits_by_author"], True)
+
+    def test_automation_identities_never_count_as_approvers(self):
+        # A machine *user* account (not a GitHub Bot) commenting /lgtm on someone else's PR.
+        node = pr(1, author="alice", labels=self.LABELS, comments=[("dep-bot", "/lgtm")])
+        p, _ = self.collect(node)
+        self.assertEqual(p["approved_by"], [])
+
+    def test_a_real_person_still_approves_a_bots_pr(self):
+        p, _ = self.collect(self.good(comments=[("carol", "/lgtm")]))
+        self.assertEqual(p["approved_by"], ["carol"])
+
+    def test_invalid_config_is_an_error(self):
+        c = Collectors("test_one_failing_repo_does_not_stop_the_others")
+        c.setUp()
+        self.addCleanup(c.tmp.cleanup)
+        c.graphql("ok-x", page([self.good()]))
+        cfg = c.fake_dir / "bad.yaml"
+        cfg.write_text("change-authors:\n  - login: dep-bot\n")  # no rationale
+        res = c.run_collector(AR2, ["o/ok-x"], extra_env={"RSC_AUTOMATION_CONFIG": str(cfg)})
+        self.assertNotEqual(res.returncode, 0)
+        self.assertEqual(json.loads((c.out / AR2 / "manifest.json").read_text())["targets"][0]["status"], "error")
+
+    def test_exemption_is_approved_only_when_every_author_has_an_approver(self):
+        approved = AUTOMATION_YAML.replace("approved-by: []", "approved-by: [carol]")
+        _, summary = self.collect(self.good(), config=approved)
+        self.assertIs(summary["exemption_approved"], True)
+
+    def test_shipped_config_is_valid_and_documents_every_entry(self):
+        import automation_config
+        cfg = automation_config.load()
+        self.assertTrue(cfg["change_authors"] and cfg["merge_automation"])
+        self.assertIs(cfg["exemption_approved"], False)
+
+
+AUTOMATION_YAML = """change-authors:
+  - login: dep-bot
+    rationale: test bot
+    approved-by: []
+merge-automation:
+  - login: openshift-merge-bot
+    rationale: test merge bot
+"""

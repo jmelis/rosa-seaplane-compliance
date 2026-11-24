@@ -10,6 +10,13 @@
       "merged_at": "2026-09-06T12:00:00Z",
       "author": "alice",
       "author_is_bot": false,
+      "automated_change": {
+        "author_allowlisted": false,
+        "gate_defined": false,
+        "gate_labels_present": true,
+        "merged_by_merge_automation": true,
+        "all_commits_by_author": true
+      },
       "merged_by": "openshift-merge-bot",
       "approved_by": [
         "bob"
@@ -25,6 +32,13 @@
       "merged_at": "2026-09-07T12:00:00Z",
       "author": "carol",
       "author_is_bot": false,
+      "automated_change": {
+        "author_allowlisted": false,
+        "gate_defined": false,
+        "gate_labels_present": true,
+        "merged_by_merge_automation": true,
+        "all_commits_by_author": true
+      },
       "merged_by": "openshift-merge-bot",
       "approved_by": [
         "dave"
@@ -40,6 +54,13 @@
       "merged_at": "2026-09-08T12:00:00Z",
       "author": "erin",
       "author_is_bot": false,
+      "automated_change": {
+        "author_allowlisted": false,
+        "gate_defined": false,
+        "gate_labels_present": true,
+        "merged_by_merge_automation": true,
+        "all_commits_by_author": true
+      },
       "merged_by": "openshift-merge-bot",
       "approved_by": [
         "frank",
@@ -49,6 +70,24 @@
         "github-review",
         "prow"
       ],
+      "history_truncated": false,
+      "status_check_state": "SUCCESS"
+    },
+    {
+      "number": 204,
+      "merged_at": "2026-09-25T12:00:00Z",
+      "author": "dep-bot",
+      "author_is_bot": true,
+      "automated_change": {
+        "author_allowlisted": true,
+        "gate_defined": true,
+        "gate_labels_present": true,
+        "merged_by_merge_automation": true,
+        "all_commits_by_author": true
+      },
+      "merged_by": "merge-bot",
+      "approved_by": [],
+      "approval_sources": [],
       "history_truncated": false,
       "status_check_state": "SUCCESS"
     }

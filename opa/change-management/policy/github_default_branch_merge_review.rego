@@ -21,10 +21,26 @@ applies if input.assessment_requirement == "RSC.CMT.CTRL01.AR02"
 # author is filtered again here: an author's own approval never counts.
 approvers(pr) := {a | some a in pr.approved_by; a != pr.author}
 
+# A change by an allowlisted automation identity counts as approved by automation
+# only when every fact holds (see config/automation.yaml): the repo's merge bot
+# has a dedicated approval-requiring rule for that author, the approval labels are
+# present, the merge bot merged it, and every commit is the author's own and
+# signed. Failing status checks are still denied by their own rule below.
+automation_facts := {"author_allowlisted", "gate_defined", "gate_labels_present", "merged_by_merge_automation", "all_commits_by_author"}
+
+automation_exempt(pr) if {
+	every fact in automation_facts {
+		pr.automated_change[fact] == true
+	}
+}
+
+unmet_automation_facts(pr) := sort([f | some f in automation_facts; not pr.automated_change[f] == true])
+
 deny contains msg if {
 	applies
 	some pr in input.pull_requests
 	count(approvers(pr)) == 0
+	not automation_exempt(pr)
 	msg := sprintf(
 		"%s: PR #%d (%s) merged to %s without a non-author approval%s",
 		[input.repository, pr.number, pr.author, input.base_ref, truncation_note(pr)],
@@ -33,6 +49,8 @@ deny contains msg if {
 
 truncation_note(pr) := " (comment history was truncated, so an approval may be missing from the evidence)" if {
 	pr.history_truncated == true
+} else := sprintf(" (automation exemption not met, missing: %s)", [concat(", ", unmet_automation_facts(pr))]) if {
+	pr.automated_change.author_allowlisted == true
 } else := " (the author is a bot, so any approval labels were applied by the bot itself)" if {
 	pr.author_is_bot == true
 } else := ""

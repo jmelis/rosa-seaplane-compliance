@@ -14,6 +14,7 @@ AR_ID="$(basename "$0" .sh)"
 WINDOW_DAYS="${RSC_WINDOW_DAYS:-30}"
 EVIDENCE_DIR="${RSC_EVIDENCE_DIR:-$(cd "$(dirname "$0")" && pwd)/output}"
 source "$(cd "$(dirname "$0")" && pwd)/lib/collect.sh"
+AUTOMATION_CONFIG="${RSC_AUTOMATION_CONFIG:-${RSC_ROOT}/config/automation.yaml}"
 
 if [[ -z "${GITHUB_TOKEN:-}" ]]; then
   echo "ERROR: GITHUB_TOKEN must be set (gh CLI reads it for GraphQL auth)." >&2
@@ -31,15 +32,26 @@ fi
 #     in a comment or review body made BEFORE the merge (a command on a closed
 #     PR does nothing), so the label is attributable to a person.
 # A bot that applies the labels to its own PR leaves no such command and so has
-# no approver; author_is_bot says so, without deciding what policy to apply.
+# no approver; author_is_bot says so. Automation identities (config/automation.yaml)
+# are never counted as approvers of other people's PRs.
+#
+# automated_change records the facts the policy needs to decide whether a PR may
+# count as approved by automation (see config/automation.yaml): the author is
+# allowlisted, the repo's Tide config has a dedicated query for that author, the
+# approval labels are present, the merge bot merged it, and every commit is
+# authored by that identity with a valid signature. The collector only reports the
+# facts; the Rego decides. `summary` counts how many PRs satisfy all five, so
+# reports can say how many merges relied on the exemption.
 # GitHub approving reviews by non-authors count directly.
 #
 # Normalized per PR: approved_by (non-author, non-bot accounts), approval_sources
 # and author_is_bot, so the Rego never needs to know about GitHub or Prow.
 
 collect_repo() {
-  local repo="$1" out="$2" owner="${1%%/*}" name="${1##*/}" base_ref cutoff after="" page raw="[]" pages=0
+  local repo="$1" out="$2" owner="${1%%/*}" name="${1##*/}" base_ref cutoff after="" page raw="[]" pages=0 tide automation
   base_ref="$(rsc_default_branch "${repo}")" || return 1
+  tide="$(rsc_tide_gate "${repo}" "${base_ref}")" || return 1
+  automation="$(python3 "${RSC_LIB_DIR}/automation_config.py" "${AUTOMATION_CONFIG}")" || return 1
   cutoff="$(jq -nr --argjson d "${WINDOW_DAYS}" 'now - ($d * 86400) | gmtime | strftime("%Y-%m-%dT%H:%M:%SZ")')"
 
   # Pages are ordered by UPDATED_AT (GitHub has no MERGED_AT sort). Keep going
@@ -65,6 +77,7 @@ collect_repo() {
               comments(first: 100) { pageInfo { hasNextPage } nodes { author { login __typename } body createdAt } }
               reviews(first: 50) { pageInfo { hasNextPage } nodes { author { login __typename } body submittedAt } }
               commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+              allCommits: commits(first: 100) { totalCount nodes { commit { author { user { login } } signature { isValid } } } }
             }
           }
         }
@@ -81,8 +94,12 @@ collect_repo() {
 
   jq --arg ar "${AR_ID}" --arg repo "${repo}" --arg base_ref "${base_ref}" \
     --argjson window_days "${WINDOW_DAYS}" --arg cutoff "${cutoff}" \
-    --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
-    def human($a): $a != null and $a.login != null and ($a.__typename != "Bot");
+    --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --argjson tide "${tide}" --argjson automation "${automation}" '
+    def base: sub("\\[bot\\]$"; "");
+    # A person: not a GitHub Bot and not one of our allowlisted automation identities.
+    def human($a): $a != null and $a.login != null and ($a.__typename != "Bot")
+      and (($automation.change_authors | index($a.login | base)) == null);
     # Final state per commenter and command: the last of /x or /x cancel wins.
     def commanders($author; $merged_at):
       [ ((.comments.nodes | map({author, body, at: .createdAt}))
@@ -99,6 +116,7 @@ collect_repo() {
       repository: $repo,
       base_ref: $base_ref,
       window_days: $window_days,
+      summary: null,
       pull_requests: [
         .[]
         | select(.mergedAt >= $cutoff)
@@ -107,6 +125,16 @@ collect_repo() {
         | ([.latestOpinionatedReviews.nodes[]
             | select(.state == "APPROVED" and human(.author) and .author.login != $author)
             | .author.login]) as $reviewers
+        | (($labels | index("lgtm")) != null and ($labels | index("approved")) != null) as $labelled
+        | (.allCommits.nodes) as $commits
+        | {
+            author_allowlisted: (($automation.change_authors | index($author | base)) != null),
+            gate_defined: (($tide.author_queries | index($author | base)) != null),
+            gate_labels_present: $labelled,
+            merged_by_merge_automation: ((.mergedBy.login // "" | base) as $m | ($automation.merge_automation | index($m)) != null),
+            all_commits_by_author: (($commits | length) > 0 and .allCommits.totalCount == ($commits | length)
+              and all($commits[]; (.commit.author.user.login // "" | base) == ($author | base) and .commit.signature.isValid == true))
+          } as $auto
         | (if ($labels | index("lgtm")) != null and ($labels | index("approved")) != null
            then commanders($author; .mergedAt) else [] end) as $prow
         | {
@@ -114,6 +142,7 @@ collect_repo() {
             merged_at: .mergedAt,
             author: $author,
             author_is_bot: (.author.__typename == "Bot"),
+            automated_change: $auto,
             merged_by: .mergedBy.login,
             approved_by: ($reviewers + $prow | unique),
             approval_sources: ([(if ($reviewers | length) > 0 then "github-review" else empty end),
@@ -123,6 +152,9 @@ collect_repo() {
           }
       ]
     }
+    | .summary = {merged: (.pull_requests | length),
+                  automation_exempt: ([.pull_requests[] | select(.automated_change | all(.[]; . == true))] | length),
+                  exemption_approved: $automation.exemption_approved}
   ' <<<"${raw}" >"${out}" || return 1
 }
 

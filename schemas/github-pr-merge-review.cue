@@ -19,6 +19,15 @@ pull_requests: [...{
 	// True when the author is a bot account. A bot that labels its own PR has no
 	// human approver; the policy decides what that means.
 	author_is_bot:      bool
+	// Facts for the documented automation exemption (config/automation.yaml). The
+	// collector reports them; the policy decides.
+	automated_change: {
+		author_allowlisted:         bool
+		gate_defined:               bool
+		gate_labels_present:        bool
+		merged_by_merge_automation: bool
+		all_commits_by_author:      bool
+	}
 	// Normalized by the collector from GitHub reviews and Prow /lgtm history:
 	// accounts other than the (non-bot) author that approved the change.
 	approved_by:        [...string]

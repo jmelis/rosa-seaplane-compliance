@@ -62,6 +62,43 @@ def load_results(scan_dir: Path) -> dict:
     return latest
 
 
+def load_automation_summary(evidence_dir: Path) -> dict:
+    """AR ID -> {merged, automation_exempt, exemption_approved} summed over targets.
+
+    Only evidence files carrying a `summary` count (AR02 today). Says how many
+    merges relied on the documented automation exemption (config/automation.yaml).
+    """
+    out = {}
+    for ar_dir in sorted(p for p in Path(evidence_dir).glob("*") if p.is_dir()):
+        merged = exempt = files = 0
+        approved = True
+        for f in sorted(ar_dir.glob("*.json")):
+            if f.name == "manifest.json":
+                continue
+            try:
+                summary = (json.loads(f.read_text()) or {}).get("summary")
+            except ValueError:
+                continue
+            if not summary:
+                continue
+            files += 1
+            merged += int(summary.get("merged", 0))
+            exempt += int(summary.get("automation_exempt", 0))
+            approved = approved and bool(summary.get("exemption_approved"))
+        if files:
+            out[ar_dir.name] = {"merged": merged, "automation_exempt": exempt, "exemption_approved": approved}
+    return out
+
+
+def automation_sentence(summary: dict) -> str:
+    """Plain statement of how much the result leans on the exemption, or ''."""
+    if not summary or not summary.get("merged"):
+        return ""
+    state = "approved" if summary["exemption_approved"] else "proposed, approval pending"
+    return (f"{summary['automation_exempt']} of {summary['merged']} merged PRs counted as approved by automation "
+            f"under the documented exemption in config/automation.yaml ({state}).")
+
+
 def load_frequencies(gemara_dir: Path) -> dict:
     """AR ID -> planned frequency, from every domain's policy.yaml."""
     freq = {}
@@ -81,7 +118,7 @@ def cycle_text(freqs: set) -> str:
             "nothing schedules the checks yet.")
 
 
-def evidence_for(method: dict, results: dict) -> dict:
+def evidence_for(method: dict, results: dict, automation: dict = None) -> dict:
     res = results.get(method["ar"])
     sc = method["scope"]
     reached = (f"reached {sc['reached']} of {sc['total']} in-scope targets" if sc["run"]
@@ -93,6 +130,9 @@ def evidence_for(method: dict, results: dict) -> dict:
         text = (f"{method['ar']}: {res['result']} (evaluator {method['executor']}). "
                 f"{reached[0].upper() + reached[1:]}.")
         updated = res["time"].astimezone(timezone.utc).strftime("%Y-%m-%d")
+    note = automation_sentence((automation or {}).get(method["ar"]))
+    if note:
+        text += " " + note
     ev = {"evidenceType": "Report",
           "evidenceDescription": f"Latest evaluation result for {method['ar']}",
           "evidenceText": text}
@@ -109,7 +149,7 @@ def implementation_status(state: str) -> str:
     return "Partially Implemented"
 
 
-def ksi_entry(row: dict, record: dict, freqs: dict, results: dict) -> dict:
+def ksi_entry(row: dict, record: dict, freqs: dict, results: dict, automation: dict = None) -> dict:
     record = record or {}
     implemented = [m for m in row["methods"] if m["implemented"]]
 
@@ -136,11 +176,11 @@ def ksi_entry(row: dict, record: dict, freqs: dict, results: dict) -> dict:
         "ksiValidation": validation,
         "ksiAssessment": [],  # assessor content; never invented
         "ksiTests": [m["ar"] for m in implemented],
-        "ksiEvidence": [evidence_for(m, results) for m in implemented],
+        "ksiEvidence": [evidence_for(m, results, automation) for m in implemented],
     }
 
 
-def build_sdr(coverage: dict, records: dict, freqs: dict, results: dict, now: datetime) -> dict:
+def build_sdr(coverage: dict, records: dict, freqs: dict, results: dict, now: datetime, automation: dict = None) -> dict:
     return {
         "certificationPackageOverviewUri": CPO_PLACEHOLDER,
         "metadata": {
@@ -150,7 +190,7 @@ def build_sdr(coverage: dict, records: dict, freqs: dict, results: dict, now: da
         },
         "fedRampRequirements": [],  # out of scope for this phase
         "keySecurityIndicators": [
-            ksi_entry(row, records.get(row["id"]), freqs, results) for row in coverage["ksis"]
+            ksi_entry(row, records.get(row["id"]), freqs, results, automation) for row in coverage["ksis"]
         ],
     }
 
@@ -179,6 +219,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--coverage", default=str(ROOT / "output/coverage.json"))
     ap.add_argument("--scan-dir", default=str(ROOT / ".complytime/scan"))
+    ap.add_argument("--evidence-dir", default=str(ROOT / "evidence/output"))
     ap.add_argument("--out", default=str(ROOT / "output/sdr/sdr.json"))
     args = ap.parse_args()
 
@@ -188,7 +229,8 @@ def main() -> None:
     coverage = json.loads(cov_path.read_text())
     ksis = fedramp_data.load_ksis()
     sdr = build_sdr(coverage, ksi_data.load_records(ksis), load_frequencies(ROOT / "gemara"),
-                    load_results(Path(args.scan_dir)), datetime.now(timezone.utc))
+                    load_results(Path(args.scan_dir)), datetime.now(timezone.utc),
+                    load_automation_summary(Path(args.evidence_dir)))
 
     text = json.dumps(sdr, indent=2) + "\n"
     leaks = find_leaks(text)

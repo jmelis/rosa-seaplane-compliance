@@ -10,6 +10,10 @@ compliant_pr := {
 	"author": "alice",
 	"merged_by": "bob",
 	"author_is_bot": false,
+	"automated_change": {
+		"author_allowlisted": false, "gate_defined": false, "gate_labels_present": true,
+		"merged_by_merge_automation": true, "all_commits_by_author": true,
+	},
 	"approved_by": ["bob"],
 	"approval_sources": ["github-review"],
 	"history_truncated": false,
@@ -110,4 +114,55 @@ test_deny_message_names_repo if {
 	}
 	some msg in violations
 	contains(msg, "openshift-online/example")
+}
+
+# Automation exemption: a bot change with no human approver.
+automated_pr := object.union(compliant_pr, {
+	"author": "dep-bot", "author_is_bot": true, "approved_by": [], "approval_sources": [],
+	"merged_by": "merge-bot",
+	"automated_change": {
+		"author_allowlisted": true, "gate_defined": true, "gate_labels_present": true,
+		"merged_by_merge_automation": true, "all_commits_by_author": true,
+	},
+})
+
+test_automation_exemption_passes_when_every_fact_holds if {
+	count(deny) == 0 with input as object.union(base, {"pull_requests": [automated_pr]})
+}
+
+test_each_unmet_fact_denies_and_is_named if {
+	# author_allowlisted is covered by its own test: without it the message is the generic one.
+	every fact in automation_facts - {"author_allowlisted"} {
+		pr := object.union(automated_pr, {"automated_change": object.union(automated_pr.automated_change, {fact: false})})
+		violations := deny with input as object.union(base, {"pull_requests": [pr]})
+		some msg in violations
+		contains(msg, "automation exemption not met")
+		contains(msg, fact)
+	}
+}
+
+test_exemption_never_applies_to_a_non_allowlisted_bot if {
+	pr := object.union(automated_pr, {"automated_change": object.union(automated_pr.automated_change, {"author_allowlisted": false})})
+	violations := deny with input as object.union(base, {"pull_requests": [pr]})
+	some msg in violations
+	contains(msg, "without a non-author approval")
+}
+
+test_exemption_does_not_waive_failing_checks if {
+	pr := object.union(automated_pr, {"status_check_state": "FAILURE"})
+	violations := deny with input as object.union(base, {"pull_requests": [pr]})
+	some msg in violations
+	contains(msg, "non-passing status checks")
+}
+
+test_exemption_does_not_waive_self_merge if {
+	pr := object.union(automated_pr, {"merged_by": "dep-bot"})
+	violations := deny with input as object.union(base, {"pull_requests": [pr]})
+	some msg in violations
+	contains(msg, "by its own author")
+}
+
+test_a_human_approver_still_passes_without_the_exemption if {
+	pr := object.union(compliant_pr, {"approved_by": ["bob"]})
+	count(deny) == 0 with input as object.union(base, {"pull_requests": [pr]})
 }

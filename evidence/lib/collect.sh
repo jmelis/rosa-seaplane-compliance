@@ -51,6 +51,41 @@ rsc_retry() {
   return "${rc}"
 }
 
+# Prow's Tide merge requirements for a repository, normalized (see
+# prow_tide_gate.py), read from the Prow config repo (openshift/release).
+# A missing config file means "no Tide gate"; any other failure (auth, rate
+# limit, 5xx) is an error, never "no gate".
+RSC_PROW_CONFIG_REPO="${RSC_PROW_CONFIG_REPO:-openshift/release}"
+RSC_PROW_CONFIG_DIR="${RSC_PROW_CONFIG_DIR:-core-services/prow/02_config}"
+
+rsc_prow_config_file() {
+  local path="$1" errf out
+  errf="$(mktemp)"
+  if out="$(rsc_retry gh api "repos/${RSC_PROW_CONFIG_REPO}/contents/${path}" -H 'Accept: application/vnd.github.raw' 2>"${errf}")"; then
+    printf '%s' "${out}"
+  elif grep -q "HTTP 404" "${errf}"; then
+    :
+  else
+    cat "${errf}" >&2; rm -f "${errf}"; return 1
+  fi
+  rm -f "${errf}"
+}
+
+rsc_tide_gate() {
+  local repo="$1" branch="$2" owner="${1%%/*}" name="${1##*/}" tmp files=() cfg path gate
+  tmp="$(mktemp -d)"
+  for path in "${RSC_PROW_CONFIG_DIR}/${owner}/${name}/_prowconfig.yaml" "${RSC_PROW_CONFIG_DIR}/${owner}/_prowconfig.yaml"; do
+    cfg="$(rsc_prow_config_file "${path}")" || { rm -rf "${tmp}"; return 1; }
+    if [[ -n "${cfg}" ]]; then
+      printf '%s\n' "${cfg}" >"${tmp}/${#files[@]}.yaml"
+      files+=("${tmp}/${#files[@]}.yaml")
+    fi
+  done
+  gate="$(python3 "${RSC_LIB_DIR}/prow_tide_gate.py" "${repo}" "${branch}" "${files[@]}")" || { rm -rf "${tmp}"; return 1; }
+  rm -rf "${tmp}"
+  printf '%s' "${gate}"
+}
+
 rsc_collect_all() {
   local out_dir="${EVIDENCE_DIR}/${AR_ID}" repo name err targets="[]" ok=0 failed=0
   mkdir -p "${out_dir}"

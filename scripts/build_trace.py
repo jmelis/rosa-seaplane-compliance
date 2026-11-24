@@ -40,6 +40,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fedramp_data  # noqa: E402
+import generate_sdr  # noqa: E402
 import ksi_data  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -219,6 +220,7 @@ def load_scope(root: Path, ars: dict, evidence_dir: Path) -> dict:
     """AR ID -> targets reached / errored / not reached, from collector manifests."""
     scope_file = root / "config/scope.yaml"
     declared = load_yaml(scope_file) if scope_file.is_file() else {}
+    automation = generate_sdr.load_automation_summary(evidence_dir)
     out = {}
     for ar_id, ar in ars.items():
         expected = []
@@ -245,6 +247,7 @@ def load_scope(root: Path, ars: dict, evidence_dir: Path) -> dict:
             "run": manifest is not None, "environment": (manifest or {}).get("environment"),
             "generated_at": (manifest or {}).get("generated_at"),
             "expected": expected, "targets": targets,
+            "automation": automation.get(ar_id),
         }
     return out
 

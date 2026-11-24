@@ -37,6 +37,11 @@ class TracePages(unittest.TestCase):
         self.assertNotIn(XSS, self.page)
         self.assertGreater(self.page.count("&lt;script&gt;alert(1)&lt;/script&gt;"), 4)  # AR text, message, error, rationale, title
 
+    def test_automation_exemption_is_stated_where_it_applies_and_only_there(self):
+        self.assertIn("5 of 12 merged PRs counted as approved by automation", self.page)
+        self.assertIn("approval pending", self.page)
+        self.assertEqual(self.page.count('<strong>Automation exemption</strong>'), 1)
+
     def test_only_our_one_inline_script(self):
         self.assertEqual(len(re.findall(r"<script\b", self.page)), 1)
 

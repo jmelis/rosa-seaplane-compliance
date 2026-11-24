@@ -256,6 +256,9 @@ def render_how(trace: dict, ar: dict) -> str:
                                    f'<li>{e(t["name"])} <span class="muted">{e(t["status"])}'
                                    + (f': {e(t["error"])}' if t.get("error") else "") + "</span></li>"
                                    for t in sc["targets"]) + "</ul>" if sc["targets"] else "")))
+    note = generate_sdr.automation_sentence(sc.get("automation"))
+    if note:
+        steps.append(step("Automation exemption", e(note) + ' <span class="muted">Bot-authored changes that merged on automation alone, under the conditions in <code>config/automation.yaml</code>.</span>'))
     if impl is None:
         for t in ("Source", "Shape", "Logic"):
             steps.append(step(t, '<span class="muted">No automated method in the policy yet.</span>'))

@@ -14,6 +14,8 @@ prints one JSON object:
     requires_approval           every query requires both `lgtm` and `approved`
     queries_without_approval    authors ("*" = anyone) of queries that do not
     holds_block_merge           every query blocks on do-not-merge/hold
+    author_queries              authors with a dedicated query that requires both
+                                approval labels, with any "[bot]" suffix removed
 
 No config files, or none with an applicable query, means no Tide gate.
 """
@@ -44,6 +46,11 @@ def applicable_queries(configs: list, repo: str, branch: str) -> list:
     return out
 
 
+def base_login(login: str) -> str:
+    """GitHub names app accounts "name[bot]" in some places and "name" in others."""
+    return login[:-5] if login.endswith("[bot]") else login
+
+
 def normalize(configs: list, repo: str, branch: str) -> dict:
     queries = applicable_queries(configs, repo, branch)
     without = [q.get("author") or "*" for q in queries
@@ -53,6 +60,8 @@ def normalize(configs: list, repo: str, branch: str) -> dict:
         "requires_approval": bool(queries) and not without,
         "queries_without_approval": without,
         "holds_block_merge": bool(queries) and all(HOLD_LABEL in (q.get("missingLabels") or []) for q in queries),
+        "author_queries": sorted({base_login(q["author"]) for q in queries
+                                  if q.get("author") and APPROVAL_LABELS <= set(q.get("labels") or [])}),
     }
 
 

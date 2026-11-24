@@ -26,32 +26,14 @@ EVIDENCE_DIR="${RSC_EVIDENCE_DIR:-$(cd "$(dirname "$0")" && pwd)/output}"
 LIB_DIR="$(cd "$(dirname "$0")" && pwd)/lib"
 source "${LIB_DIR}/collect.sh"
 
-PROW_CONFIG_REPO="${RSC_PROW_CONFIG_REPO:-openshift/release}"
-PROW_CONFIG_DIR="${RSC_PROW_CONFIG_DIR:-core-services/prow/02_config}"
-
 if [[ -z "${GITHUB_TOKEN:-}" ]]; then
   echo "ERROR: GITHUB_TOKEN must be set (gh CLI reads it for API auth)." >&2
   exit 1
 fi
 
-# Print a Prow config file from the config repo, or nothing if it does not
-# exist. Any other failure (auth, rate limit, 5xx) is an error, never "no gate".
-prow_config_file() {
-  local path="$1" errf out
-  errf="$(mktemp)"
-  if out="$(rsc_retry gh api "repos/${PROW_CONFIG_REPO}/contents/${path}" -H 'Accept: application/vnd.github.raw' 2>"${errf}")"; then
-    printf '%s' "${out}"
-  elif grep -q "HTTP 404" "${errf}"; then
-    :
-  else
-    cat "${errf}" >&2; rm -f "${errf}"; return 1
-  fi
-  rm -f "${errf}"
-}
-
 collect_repo() {
   local repo="$1" out="$2" owner="${1%%/*}" name="${1##*/}" branch raw protected=true errf
-  local tmp files=() cfg gate
+  local gate
   branch="$(rsc_default_branch "${repo}")" || return 1
   errf="$(mktemp)"
   if ! raw="$(gh api "repos/${repo}/branches/${branch}/protection" 2>"${errf}")"; then
@@ -67,17 +49,7 @@ collect_repo() {
   fi
   rm -f "${errf}"
 
-  # Tide's requirements: repo-level and org-level _prowconfig.yaml.
-  tmp="$(mktemp -d)"
-  for path in "${PROW_CONFIG_DIR}/${owner}/${name}/_prowconfig.yaml" "${PROW_CONFIG_DIR}/${owner}/_prowconfig.yaml"; do
-    cfg="$(prow_config_file "${path}")" || { rm -rf "${tmp}"; return 1; }
-    if [[ -n "${cfg}" ]]; then
-      printf '%s\n' "${cfg}" >"${tmp}/${#files[@]}.yaml"
-      files+=("${tmp}/${#files[@]}.yaml")
-    fi
-  done
-  gate="$(python3 "${LIB_DIR}/prow_tide_gate.py" "${repo}" "${branch}" "${files[@]}")" || { rm -rf "${tmp}"; return 1; }
-  rm -rf "${tmp}"
+  gate="$(rsc_tide_gate "${repo}" "${branch}")" || return 1
 
   jq --arg ar "${AR_ID}" --arg repo "${repo}" --arg branch "${branch}" --argjson protected "${protected}" \
     --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson tide "${gate}" '
