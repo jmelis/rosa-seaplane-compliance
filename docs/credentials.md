@@ -35,10 +35,13 @@ job instead.
    - Administration: **Read-only** (branch-protection reads are gated
      behind admin-read, not plain repo read)
    - Pull requests: **Read-only**
-   - Commit statuses: **Read-only** and Checks: **Read-only** (AR02 reads each
-     merged PR's check state, `statusCheckRollup`; public repositories allow it
-     anonymously, but a private one such as `rosa-seaplane-internal` fails with
-     "Resource not accessible by personal access token" without these)
+   - Commit statuses: **Read-only** (AR02 reads each merged PR's check state,
+     `statusCheckRollup`; public repositories allow it anonymously, but a
+     private one such as `rosa-seaplane-internal` fails with "Resource not
+     accessible by personal access token" without it). There is no separate
+     "Checks" permission for fine-grained tokens; it exists only for GitHub
+     Apps. If the error persists with Commit statuses granted, the token needs
+     a classic `repo` scope or a GitHub App instead.
    - Metadata: Read-only (auto-included, can't be unchecked)
    - Leave everything else "No access"
 7. Generate, copy the token (`github_pat_...`)
