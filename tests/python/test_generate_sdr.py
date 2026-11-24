@@ -143,7 +143,7 @@ class Sdr(unittest.TestCase):
             self.assertNotIn(needle, text)
 
     def test_leak_detector(self):
-        for bad in ("/Users/x", "file:///tmp", "acct 123456789012", "arn:aws:iam::1"):
+        for bad in ("/Users/x", "file:///tmp", "acct " + "1" * 12, "arn:aws:iam::1"):
             self.assertTrue(generate_sdr.find_leaks(bad), bad)
         self.assertEqual(generate_sdr.find_leaks("2026-11-24T09:29:26Z"), [])
 
