@@ -19,7 +19,8 @@ trust: same-account
 
 tags:
   purpose: compliance-evidence-readonly
-  managed-by: rosa-seaplane-compliance (temporary; to move into the platform Terraform)
+  managed-by: rosa-seaplane-compliance
+  lifecycle: temporary-until-in-platform-terraform
 
 # AWS-managed policies attached as they are.
 managed-policies:

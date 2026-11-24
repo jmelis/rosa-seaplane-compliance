@@ -65,6 +65,12 @@ class Definition(unittest.TestCase):
         with self.assertRaises(r.DefinitionError):
             load(GOOD.replace("    needed-by: [a check]\n", ""))
 
+    def test_tags_must_use_characters_iam_accepts(self):
+        for bad in ("a (b)", "a;b", "a,b"):
+            with self.assertRaises(r.DefinitionError, msg=bad):
+                load(GOOD + f"tags:\n  managed-by: \"{bad}\"\n")
+        load(GOOD + "tags:\n  managed-by: ok-value_1.2:x/y=z+w@q\n")
+
     def test_only_same_account_trust_is_supported(self):
         with self.assertRaises(r.DefinitionError):
             load(GOOD.replace("same-account", "anyone"))

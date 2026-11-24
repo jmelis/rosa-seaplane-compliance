@@ -34,6 +34,7 @@ import environment  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 DEFINITION = ROOT / "config/aws/compliance-readonly-role.yaml"
 ID_RE = re.compile(r"[0-9]{12}")
+TAG_RE = re.compile(r"[\w\s.:/=+\-@]{1,256}")
 WRITE_PROBES = ["iam:CreateUser", "iam:AttachRolePolicy", "s3:PutObject", "ec2:TerminateInstances"]
 
 
@@ -56,6 +57,10 @@ def load_definition(path: Path = DEFINITION) -> dict:
             raise DefinitionError(f"missing {key}")
     if d["trust"] != "same-account":
         raise DefinitionError("only trust: same-account is supported")
+    for k, v in (d.get("tags") or {}).items():
+        # IAM rejects anything else, and only after the call is made.
+        if not TAG_RE.fullmatch(str(k)) or not TAG_RE.fullmatch(str(v)):
+            raise DefinitionError(f"tag {k!r}={v!r} has characters IAM does not allow")
     for p in d["managed-policies"]:
         if not p.get("arn", "").startswith("arn:aws:iam::aws:policy/") or not p.get("needed-by"):
             raise DefinitionError(f"managed policy needs an AWS-managed arn and needed-by: {p}")
