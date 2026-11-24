@@ -5,8 +5,9 @@ The definition holds regions, logical account names and where each account's ID
 sits in the platform's account snapshot, and nothing sensitive. AWS access for it
 is set up by scripts/aws_access.py.
 
-    environment.py [name]       print the environment (default: $RSC_ENV or
-                                integration) and whether its accounts can be resolved
+    environment.py [name]               print the environment (default: $RSC_ENV or
+                                        integration) and whether its accounts can be resolved
+    environment.py --accounts [name]    print only the logical account names, one per line
 """
 import os
 import re
@@ -52,10 +53,22 @@ def load(name: str = None, environ: dict = None, env_dir: Path = ENV_DIR) -> dic
             "saml_role": doc["saml-role"], "accounts": accounts}
 
 
+def account_names(name: str = None, environ: dict = None, env_dir: Path = ENV_DIR) -> list:
+    """Logical account names of an environment: what checks must reach (never IDs)."""
+    return [a["name"] for a in load(name, environ, env_dir)["accounts"]]
+
+
 def main() -> None:
+    args = [a for a in sys.argv[1:] if a != "--accounts"]
+    if "--accounts" in sys.argv[1:]:
+        try:
+            print("\n".join(a["name"] for a in load(args[0] if args else None)["accounts"]))
+        except EnvironmentError_ as e:
+            sys.exit(f"ERROR: {e}")
+        return
     import aws_access
     try:
-        env = load(sys.argv[1] if len(sys.argv) > 1 else None)
+        env = load(args[0] if args else None)
         status = aws_access.describe(env)
     except (EnvironmentError_, aws_access.AccessError) as e:
         sys.exit(f"ERROR: {e}")

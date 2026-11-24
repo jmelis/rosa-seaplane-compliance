@@ -23,6 +23,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import environment  # noqa: E402
 import fedramp_data  # noqa: E402
 import ksi_data  # noqa: E402
 
@@ -99,6 +100,7 @@ def gather() -> dict:
         "scope": ksi_data.load_scope(),
         "records": ksi_data.load_records(ksis),
         "repos": ksi_data.load_repo_scope(),
+        "accounts": environment.account_names(),
         "coverage": coverage, "triage": triage, "kinds": kinds,
         "ksi_maps": ksi_maps, "control_maps": control_maps,
         "manifests": manifests, "fixtures": fixtures,
@@ -107,11 +109,14 @@ def gather() -> dict:
 
 # --- rollup (pure) -----------------------------------------------------------
 
-def expected_targets(target_types: list, manifest: dict, repos: list) -> list:
-    """Targets a method should have reached. GitHub repos come from the scope
-    file, so a repo a collector never listed still shows up as missing."""
+def expected_targets(target_types: list, manifest: dict, repos: list, accounts: list = None) -> list:
+    """Targets a method should have reached. GitHub repos come from the scope file
+    and AWS accounts (logical names, never IDs) from the environment config, so a
+    target a collector never listed still shows up as missing."""
     if "github-repository" in (target_types or []):
         return list(repos)
+    if "aws-account" in (target_types or []) and accounts:
+        return list(accounts)
     return [t["name"] for t in (manifest or {}).get("targets", [])]
 
 
@@ -119,7 +124,7 @@ def method_scope(ar: str, target_types: list, data: dict) -> dict:
     manifest = data["manifests"].get(ar)
     if manifest is None:
         return {"run": False, "reached": 0, "total": None, "missing": []}
-    expected = expected_targets(target_types, manifest, data["repos"])
+    expected = expected_targets(target_types, manifest, data["repos"], data.get("accounts"))
     collected = {t["name"] for t in manifest.get("targets", []) if t.get("status") == "collected"}
     missing = [t for t in expected if t not in collected]
     return {"run": True, "reached": len(expected) - len(missing), "total": len(expected), "missing": missing}

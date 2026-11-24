@@ -1,7 +1,9 @@
 # Shared by the evidence collectors; sourced, not executed (so the entrypoint,
 # which runs every executable file directly under evidence/, skips it).
 #
-# A collector defines `collect_repo <owner/name> <out-file>` (write one JSON
+# A collector defines `collect_repo <owner/name> <out-file>` (or `collect_target
+# <name> <out-file>` when its targets are not repositories, e.g. AWS accounts, in
+# which case it also defines `rsc_list_targets`; see evidence/lib/aws.sh) (write one JSON
 # evidence document, exit non-zero on failure). It runs where `set -e` is
 # ignored, so guard every command with `|| return 1` and then calls
 # `rsc_collect_all`. That runs it for every repository in config/scope.yaml,
@@ -86,8 +88,12 @@ rsc_tide_gate() {
   printf '%s' "${gate}"
 }
 
+# The targets to collect from. Repositories by default; an AWS collector overrides it.
+rsc_list_targets() { rsc_repos; }
+
 rsc_collect_all() {
-  local out_dir="${EVIDENCE_DIR}/${AR_ID}" repo name err targets="[]" ok=0 failed=0
+  local out_dir="${EVIDENCE_DIR}/${AR_ID}" repo name err targets="[]" ok=0 failed=0 collect_fn=collect_repo
+  declare -F collect_target >/dev/null && collect_fn=collect_target
   mkdir -p "${out_dir}"
   # Evidence from a previous run must not survive into this one.
   find "${out_dir}" -maxdepth 1 -name '*.json' -delete
@@ -95,7 +101,7 @@ rsc_collect_all() {
   while IFS= read -r repo; do
     [[ -n "${repo}" ]] || continue
     name="${repo##*/}"
-    if err="$(collect_repo "${repo}" "${out_dir}/${name}.json" 2>&1 >/dev/null)"; then
+    if err="$("${collect_fn}" "${repo}" "${out_dir}/${name}.json" 2>&1 >/dev/null)"; then
       targets="$(jq --arg n "${repo}" '. + [{name: $n, status: "collected"}]' <<<"${targets}")"
       ok=$((ok + 1))
     else
@@ -106,7 +112,7 @@ rsc_collect_all() {
       failed=$((failed + 1))
       echo "WARN: ${AR_ID}: could not collect ${repo}: $(head -n 1 <<<"${err}")" >&2
     fi
-  done < <(rsc_repos)
+  done < <(rsc_list_targets)
 
   # No assessment_requirement key: the Rego packages judge every JSON file under
   # input_path, and the manifest is not evidence about any repository.
@@ -114,6 +120,6 @@ rsc_collect_all() {
     --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson targets "${targets}" \
     '{ar: $ar, environment: $env, generated_at: $at, targets: $targets}' >"${out_dir}/manifest.json"
 
-  echo "${AR_ID}: collected ${ok} repo(s), ${failed} error(s); manifest at ${out_dir}/manifest.json" >&2
-  [[ "${ok}" -gt 0 ]] || { echo "ERROR: ${AR_ID}: no repository could be collected." >&2; return 1; }
+  echo "${AR_ID}: collected ${ok} target(s), ${failed} error(s); manifest at ${out_dir}/manifest.json" >&2
+  [[ "${ok}" -gt 0 ]] || { echo "ERROR: ${AR_ID}: no target could be collected." >&2; return 1; }
 }

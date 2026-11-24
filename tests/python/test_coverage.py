@@ -130,6 +130,22 @@ class States(unittest.TestCase):
         self.assertEqual(roll_ksi(d, "KSI-CMT-VTD")["methods_implemented"], 1)
 
 
+class AwsTargets(unittest.TestCase):
+    ACCOUNTS = ["central", "regional", "management-mc01"]
+
+    def test_expected_targets_for_aws_accounts_are_the_logical_names(self):
+        self.assertEqual(coverage.expected_targets(["aws-account"], None, ["org/a"], self.ACCOUNTS), self.ACCOUNTS)
+
+    def test_github_targets_still_come_from_the_repo_scope(self):
+        self.assertEqual(coverage.expected_targets(["github-repository"], None, ["org/a"], self.ACCOUNTS), ["org/a"])
+
+    def test_an_account_the_collector_never_listed_is_missing_scope(self):
+        data = {"manifests": {AR1: manifest(central="collected", regional="error")}, "repos": [], "accounts": self.ACCOUNTS}
+        scope = coverage.method_scope(AR1, ["aws-account"], data)
+        self.assertEqual((scope["reached"], scope["total"]), (1, 3))
+        self.assertEqual(sorted(scope["missing"]), ["management-mc01", "regional"])
+
+
 class Controls(unittest.TestCase):
     def test_addressed_only_counts_related_controls(self):
         c = roll_ksi(base_data(), "KSI-CMT-VTD")["controls"]

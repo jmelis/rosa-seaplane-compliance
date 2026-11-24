@@ -22,6 +22,15 @@ class Environments(unittest.TestCase):
         names = [a["name"] for a in environment.load("stage", {})["accounts"]]
         self.assertEqual(names, ["central", "regional", "management-mc01", "management-mc02"])
 
+    def test_account_names_are_logical_names_only(self):
+        self.assertEqual(environment.account_names("integration", {}), ["central", "regional", "management-mc01"])
+
+    def test_accounts_flag_prints_names_one_per_line(self):
+        import subprocess
+        out = subprocess.run([sys.executable, str(ROOT / "scripts/environment.py"), "--accounts", "stage"],
+                             capture_output=True, text=True, check=True).stdout.split()
+        self.assertEqual(out, ["central", "regional", "management-mc01", "management-mc02"])
+
     def test_default_is_integration(self):
         self.assertEqual(environment.load(environ={})["name"], "integration")
 

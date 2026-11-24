@@ -40,6 +40,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fedramp_data  # noqa: E402
+import environment as environment_config  # noqa: E402
 import generate_sdr  # noqa: E402
 import ksi_data  # noqa: E402
 
@@ -216,7 +217,7 @@ def classify(raw: str, ksis: dict) -> tuple:
 
 # --- scope and results --------------------------------------------------------
 
-def load_scope(root: Path, ars: dict, evidence_dir: Path) -> dict:
+def load_scope(root: Path, ars: dict, evidence_dir: Path, environment_name: str = None) -> dict:
     """AR ID -> targets reached / errored / not reached, from collector manifests."""
     scope_file = root / "config/scope.yaml"
     declared = load_yaml(scope_file) if scope_file.is_file() else {}
@@ -225,7 +226,12 @@ def load_scope(root: Path, ars: dict, evidence_dir: Path) -> dict:
     for ar_id, ar in ars.items():
         expected = []
         for a in ar["applicability"]:
-            expected += list(declared.get(a.replace("_", "-")) or [])
+            listed = list(declared.get(a.replace("_", "-")) or [])
+            if not listed and a == "aws_accounts":
+                # Not declared in config/scope.yaml: use the logical account names of
+                # the environment config (never IDs).
+                listed = environment_config.account_names(environment_name)
+            expected += listed
         mf = evidence_dir / ar_id / "manifest.json"
         manifest = json.loads(mf.read_text()) if mf.is_file() else None
         got = {t["name"]: t for t in (manifest or {}).get("targets", [])}
@@ -373,7 +379,7 @@ def build(root: Path, coverage: dict, now: datetime, environment: str,
         req["control_status"] = status
         req["record"] = {k: (rec.get(k) or None) for k in ("measures", "automation-verification", "validation")}
 
-    scope = load_scope(root, ars, evidence_dir)
+    scope = load_scope(root, ars, evidence_dir, environment)
     results, scan_meta = load_results(root, scan_dir)
 
     ar_out = {}
