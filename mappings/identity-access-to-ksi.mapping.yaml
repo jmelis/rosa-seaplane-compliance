@@ -42,3 +42,17 @@ mappings:
           holds an active long-term credential. This is the configuration half of
           securing non-user authentication: services should authenticate with
           short-lived credentials, so a standing key is the thing to find.
+
+  - id: RSC.IAM.MAP.KSI.M02
+    source: RSC.IAM.CTRL01.AR02
+    relationship: supports
+    targets:
+      - entry-id: KSI-IAM-SNU
+        strength: 7
+        rationale: >
+          Looks in each account's audit log for any authentication with a long-term
+          credential in the window, for every key that exists, and cross-checks the
+          account's own record of when each key was last used. This is the behavior
+          half of securing non-user authentication: a standing key that is really
+          being used is the case that matters, and a result that cannot be
+          confirmed is reported, never passed.

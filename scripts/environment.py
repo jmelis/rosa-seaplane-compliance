@@ -59,7 +59,13 @@ def account_names(name: str = None, environ: dict = None, env_dir: Path = ENV_DI
 
 
 def main() -> None:
-    args = [a for a in sys.argv[1:] if a != "--accounts"]
+    args = [a for a in sys.argv[1:] if a not in ("--accounts", "--regions")]
+    if "--regions" in sys.argv[1:]:
+        try:
+            print(",".join(load(args[0] if args else None)["regions"]))
+        except EnvironmentError_ as e:
+            sys.exit(f"ERROR: {e}")
+        return
     if "--accounts" in sys.argv[1:]:
         try:
             print("\n".join(a["name"] for a in load(args[0] if args else None)["accounts"]))

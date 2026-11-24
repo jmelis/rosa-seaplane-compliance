@@ -41,3 +41,14 @@ actions:
     needed-by: KSI-IAM-SNU configuration method (no IAM user has an active access key)
   - action: cloudtrail:LookupEvents
     needed-by: KSI-IAM-SNU behavior method (no non-user principal authenticated with a long-term key)
+  # The behavior method (RSC.IAM.CTRL01.AR02) finds each existing key, asks the audit log
+  # about it, and cross-checks IAM's own last-used record. SecurityAudit already grants
+  # these; they are listed so the need is on record.
+  - action: iam:ListUsers
+    needed-by: KSI-IAM-SNU behavior method (find the IAM users whose keys to look up)
+  - action: iam:ListAccessKeys
+    needed-by: KSI-IAM-SNU behavior method (find each user's active and inactive access keys)
+  - action: iam:GetAccessKeyLastUsed
+    needed-by: KSI-IAM-SNU behavior method (cross-check each key's last use against the audit log)
+  - action: iam:GetAccountSummary
+    needed-by: KSI-IAM-SNU behavior method (does the root user have any access key)

@@ -19,5 +19,11 @@ rsc_aws_accounts() {
   python3 "${RSC_ROOT}/scripts/environment.py" --accounts "${RSC_ENV:-integration}"
 }
 
+# The regions of the selected environment, comma separated (us-east-1 is added by
+# collectors that need it).
+rsc_aws_regions() {
+  python3 "${RSC_ROOT}/scripts/environment.py" --regions "${RSC_ENV:-integration}"
+}
+
 # The read-only profile for a logical account.
 rsc_aws_ro_profile() { echo "rsc-$1-ro"; }
