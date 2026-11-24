@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import datetime, timedelta, timezone
 import stat
 import subprocess
 import tempfile
@@ -16,9 +17,11 @@ args="$*"
 case "$args" in
   *"api graphql"*)
     name="$(sed -n 's/.*-f name=\([^ ]*\).*/\1/p' <<<"$args")"
+    file="${FAKE_GH_DIR}/${name}.json"
+    [[ "$args" == *"-f after="* ]] && file="${FAKE_GH_DIR}/${name}.2.json"
+    if [[ -f "$file" ]]; then cat "$file"; exit 0; fi
     [[ "$name" == *ok* || "$name" == *unprot* ]] || { echo "gh: Resource not accessible by personal access token" >&2; exit 1; }
-    now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo '{"data":{"repository":{"pullRequests":{"nodes":[{"number":7,"mergedAt":"'"$now"'","author":{"login":"a"},"reviewDecision":"APPROVED","mergedBy":{"login":"b"},"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]}}]}}}}'
+    cat "${FAKE_GH_DIR}/default.json"
     ;;
   *"/protection"*)
     case "$args" in
@@ -32,6 +35,37 @@ esac
 """
 
 
+def now():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def user(login, bot=False):
+    return {"login": login, "__typename": "Bot" if bot else "User"}
+
+
+def pr(number, author="alice", labels=(), comments=(), reviews=(), opinionated=(), at=None, truncated=False):
+    """A GraphQL pull request node. comments/reviews are (login, body[, time])."""
+    t = at or now()
+    return {
+        "number": number, "mergedAt": t, "updatedAt": t,
+        "author": user(author), "mergedBy": {"login": "openshift-merge-bot"},
+        "labels": {"nodes": [{"name": n} for n in labels]},
+        "latestOpinionatedReviews": {"nodes": [{"state": st, "author": user(a)} for a, st in opinionated]},
+        "comments": {"pageInfo": {"hasNextPage": truncated},
+                     "nodes": [{"author": user(c[0], len(c) > 3), "body": c[1], "createdAt": c[2] if len(c) > 2 else "2026-01-01T00:00:00Z"}
+                               for c in comments]},
+        "reviews": {"pageInfo": {"hasNextPage": False},
+                    "nodes": [{"author": user(r[0]), "body": r[1], "submittedAt": r[2] if len(r) > 2 else "2026-01-01T00:00:00Z"}
+                              for r in reviews]},
+        "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]},
+    }
+
+
+def page(nodes, has_next=False, cursor="c1"):
+    return {"data": {"repository": {"pullRequests": {
+        "pageInfo": {"hasNextPage": has_next, "endCursor": cursor}, "nodes": nodes}}}}
+
+
 class Collectors(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -42,11 +76,17 @@ class Collectors(unittest.TestCase):
         gh.write_text(FAKE_GH)
         gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
         self.out = t / "out"
+        self.fake_dir = t / "fake"
+        self.fake_dir.mkdir()
+        self.graphql("default", page([pr(7, labels=["lgtm", "approved"], comments=[("bob", "/lgtm")])]))
+
+    def graphql(self, name, body):
+        (self.fake_dir / f"{name}.json").write_text(json.dumps(body))
 
     def run_collector(self, ar, repos):
         env = dict(os.environ, PATH=f"{self.tmp.name}/bin:{os.environ['PATH']}", GITHUB_TOKEN="x",
                    RSC_REPOS=" ".join(repos), RSC_EVIDENCE_DIR=str(self.out), RSC_BASE_REF="main",
-                   RSC_ENV="integration")
+                   RSC_ENV="integration", FAKE_GH_DIR=str(self.fake_dir))
         return subprocess.run([str(ROOT / "evidence" / f"{ar}.sh")], env=env, capture_output=True, text=True)
 
     def manifest(self, ar):
@@ -95,12 +135,109 @@ class Collectors(unittest.TestCase):
 
     def test_repos_default_to_scope_file(self):
         env = dict(os.environ, PATH=f"{self.tmp.name}/bin:{os.environ['PATH']}", GITHUB_TOKEN="x",
-                   RSC_EVIDENCE_DIR=str(self.out), RSC_BASE_REF="main")
+                   RSC_EVIDENCE_DIR=str(self.out), RSC_BASE_REF="main", FAKE_GH_DIR=str(self.fake_dir))
         env.pop("RSC_REPOS", None)
         subprocess.run([str(ROOT / "evidence" / f"{AR2}.sh")], env=env, capture_output=True, text=True)
         names = {t["name"] for t in self.manifest(AR2)["targets"]}
         self.assertEqual(len(names), 7)
         self.assertIn("openshift-online/rosa-seaplane-internal", names)
+
+
+class Approval(unittest.TestCase):
+    """How the AR02 collector normalizes GitHub and Prow approvals."""
+
+    def collect(self, node, repo="o/ok-x"):
+        c = Collectors("test_one_failing_repo_does_not_stop_the_others")
+        c.setUp()
+        self.addCleanup(c.tmp.cleanup)
+        c.graphql("ok-x", page([node]))
+        res = c.run_collector(AR2, [repo])
+        self.assertEqual(res.returncode, 0, res.stderr)
+        prs = json.loads((c.out / AR2 / "ok-x.json").read_text())["pull_requests"]
+        self.assertEqual(len(prs), 1)
+        return prs[0]
+
+    LABELS = ("lgtm", "approved")
+
+    def test_github_review_approval(self):
+        p = self.collect(pr(1, opinionated=[("bob", "APPROVED")]))
+        self.assertEqual((p["approved_by"], p["approval_sources"]), (["bob"], ["github-review"]))
+
+    def test_prow_approval_from_comment(self):
+        p = self.collect(pr(1, labels=self.LABELS, comments=[("bob", "looks good\n/lgtm\r\n/approve")]))
+        self.assertEqual((p["approved_by"], p["approval_sources"]), (["bob"], ["prow"]))
+
+    def test_prow_approval_from_review_body(self):
+        p = self.collect(pr(1, labels=self.LABELS, reviews=[("bob", "/lgtm\n/approve")]))
+        self.assertEqual(p["approved_by"], ["bob"])
+
+    def test_both_sources(self):
+        p = self.collect(pr(1, labels=self.LABELS, comments=[("carol", "/lgtm")], opinionated=[("bob", "APPROVED")]))
+        self.assertEqual(p["approved_by"], ["bob", "carol"])
+        self.assertEqual(p["approval_sources"], ["github-review", "prow"])
+
+    def test_authors_own_lgtm_never_counts(self):
+        p = self.collect(pr(1, author="alice", labels=self.LABELS, comments=[("alice", "/lgtm")]))
+        self.assertEqual(p["approved_by"], [])
+
+    def test_authors_own_github_approval_never_counts(self):
+        p = self.collect(pr(1, author="alice", opinionated=[("alice", "APPROVED")]))
+        self.assertEqual(p["approved_by"], [])
+
+    def test_command_without_labels_did_not_take_effect(self):
+        # The real shape of rosa-seaplane PR 968: /lgtm in a comment, no labels.
+        for labels in ((), ("lgtm",), ("approved",)):
+            p = self.collect(pr(1, labels=labels, comments=[("bob", "/lgtm\n/approve")]))
+            self.assertEqual(p["approved_by"], [], labels)
+
+    def test_labels_without_any_human_command_do_not_prove_an_approver(self):
+        # A bot author applying its own labels, as dependency-update bots do.
+        p = self.collect(pr(1, author="dep-bot", labels=self.LABELS, comments=[("openshift-ci", "[APPROVALNOTIFIER]", "2026-01-01T00:00:00Z", "bot")]))
+        self.assertEqual(p["approved_by"], [])
+
+    def test_cancelled_lgtm_does_not_count_but_a_later_relgtm_does(self):
+        cancelled = pr(1, labels=self.LABELS, comments=[("bob", "/lgtm", "2026-01-01T00:00:01Z"), ("bob", "/lgtm cancel", "2026-01-01T00:00:02Z")])
+        self.assertEqual(self.collect(cancelled)["approved_by"], [])
+        again = pr(1, labels=self.LABELS, comments=[("bob", "/lgtm cancel", "2026-01-01T00:00:01Z"), ("bob", "/lgtm", "2026-01-01T00:00:02Z")])
+        self.assertEqual(self.collect(again)["approved_by"], ["bob"])
+
+    def test_commands_must_start_a_line(self):
+        p = self.collect(pr(1, labels=self.LABELS, comments=[("bob", "please do not /lgtm yet\n> /lgtm quoted")]))
+        self.assertEqual(p["approved_by"], [])
+
+    def test_bot_commenters_are_not_approvers(self):
+        p = self.collect(pr(1, labels=self.LABELS, comments=[("some-bot", "/lgtm", "2026-01-01T00:00:00Z", "bot")]))
+        self.assertEqual(p["approved_by"], [])
+
+    def test_truncated_history_is_flagged(self):
+        self.assertIs(self.collect(pr(1, truncated=True))["history_truncated"], True)
+        self.assertIs(self.collect(pr(1))["history_truncated"], False)
+
+    def test_no_review_decision_or_comment_text_in_evidence(self):
+        p = self.collect(pr(1, labels=self.LABELS, comments=[("bob", "secret-ish text\n/lgtm")]))
+        self.assertNotIn("review_decision", p)
+        self.assertNotIn("secret-ish", json.dumps(p))
+
+    def test_prs_outside_the_window_are_dropped(self):
+        old = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        c = Collectors("test_one_failing_repo_does_not_stop_the_others")
+        c.setUp()
+        self.addCleanup(c.tmp.cleanup)
+        c.graphql("ok-x", page([pr(1), pr(2, at=old)]))
+        c.run_collector(AR2, ["o/ok-x"])
+        prs = json.loads((c.out / AR2 / "ok-x.json").read_text())["pull_requests"]
+        self.assertEqual([p["number"] for p in prs], [1])
+
+    def test_pagination_follows_until_the_window_is_covered(self):
+        old = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        c = Collectors("test_one_failing_repo_does_not_stop_the_others")
+        c.setUp()
+        self.addCleanup(c.tmp.cleanup)
+        c.graphql("ok-x", page([pr(1), pr(2)], has_next=True))
+        c.graphql("ok-x.2", page([pr(3), pr(4, at=old)], has_next=True, cursor="c2"))
+        c.run_collector(AR2, ["o/ok-x"])
+        prs = json.loads((c.out / AR2 / "ok-x.json").read_text())["pull_requests"]
+        self.assertEqual([p["number"] for p in prs], [1, 2, 3])
 
 
 if __name__ == "__main__":

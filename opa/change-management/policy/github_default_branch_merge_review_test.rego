@@ -9,23 +9,51 @@ compliant_pr := {
 	"number": 201,
 	"author": "alice",
 	"merged_by": "bob",
-	"review_decision": "APPROVED",
+	"approved_by": ["bob"],
+	"approval_sources": ["github-review"],
+	"history_truncated": false,
 	"status_check_state": "SUCCESS",
 }
 
-test_compliant_merges_pass if {
-	count(deny) == 0 with input as {"assessment_requirement": "RSC.CMT.CTRL01.AR02", "repository": "openshift-online/example", "base_ref": "main", "pull_requests": [compliant_pr]}
+base := {
+	"assessment_requirement": "RSC.CMT.CTRL01.AR02",
+	"repository": "openshift-online/example",
+	"base_ref": "main",
 }
 
-test_unapproved_review_is_denied if {
-	violations := deny with input as {
-		"assessment_requirement": "RSC.CMT.CTRL01.AR02",
-		"repository": "openshift-online/example",
-		"base_ref": "main",
-		"pull_requests": [object.union(compliant_pr, {"review_decision": "REVIEW_REQUIRED"})],
-	}
+test_github_approval_passes if {
+	count(deny) == 0 with input as object.union(base, {"pull_requests": [compliant_pr]})
+}
+
+test_prow_approval_passes if {
+	pr := object.union(compliant_pr, {"approved_by": ["dave"], "approval_sources": ["prow"], "merged_by": "openshift-merge-bot"})
+	count(deny) == 0 with input as object.union(base, {"pull_requests": [pr]})
+}
+
+test_no_approval_is_denied if {
+	pr := object.union(compliant_pr, {"approved_by": [], "approval_sources": []})
+	violations := deny with input as object.union(base, {"pull_requests": [pr]})
 	some msg in violations
-	contains(msg, "without an approved review")
+	contains(msg, "without a non-author approval")
+}
+
+test_self_approval_is_denied if {
+	pr := object.union(compliant_pr, {"approved_by": ["alice"], "approval_sources": ["prow"]})
+	violations := deny with input as object.union(base, {"pull_requests": [pr]})
+	some msg in violations
+	contains(msg, "without a non-author approval")
+}
+
+test_self_approval_among_others_still_needs_a_non_author if {
+	pr := object.union(compliant_pr, {"approved_by": ["alice", "bob"]})
+	count(deny) == 0 with input as object.union(base, {"pull_requests": [pr]})
+}
+
+test_truncated_history_is_noted if {
+	pr := object.union(compliant_pr, {"approved_by": [], "history_truncated": true})
+	violations := deny with input as object.union(base, {"pull_requests": [pr]})
+	some msg in violations
+	contains(msg, "history was truncated")
 }
 
 test_self_merge_is_denied if {

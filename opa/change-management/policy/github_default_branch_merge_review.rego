@@ -15,22 +15,31 @@ import rego.v1
 
 applies if input.assessment_requirement == "RSC.CMT.CTRL01.AR02"
 
+# Approval is normalized by the collector (GitHub reviews and Prow commands both
+# end up in approved_by), so this rule does not care how the team approves. The
+# author is filtered again here: an author's own approval never counts.
+approvers(pr) := {a | some a in pr.approved_by; a != pr.author}
+
 deny contains msg if {
 	applies
 	some pr in input.pull_requests
-	pr.review_decision != "APPROVED"
+	count(approvers(pr)) == 0
 	msg := sprintf(
-		"%s: PR #%d (%s) merged to %s without an approved review (review_decision=%s)",
-		[input.repository, pr.number, pr.author, input.base_ref, pr.review_decision],
+		"%s: PR #%d (%s) merged to %s without a non-author approval%s",
+		[input.repository, pr.number, pr.author, input.base_ref, truncation_note(pr)],
 	)
 }
+
+truncation_note(pr) := " (comment history was truncated, so an approval may be missing from the evidence)" if {
+	pr.history_truncated == true
+} else := ""
 
 deny contains msg if {
 	applies
 	some pr in input.pull_requests
 	pr.author == pr.merged_by
 	msg := sprintf(
-		"%s: PR #%d merged to %s by its own author (%s): no non-author approval is possible",
+		"%s: PR #%d merged to %s by its own author (%s), bypassing the merge gate",
 		[input.repository, pr.number, input.base_ref, pr.author],
 	)
 }

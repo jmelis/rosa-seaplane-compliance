@@ -16,6 +16,12 @@ pull_requests: [...{
 	merged_at:          string
 	author:             string
 	merged_by:          string
-	review_decision:    string
+	// Normalized by the collector from GitHub reviews and Prow /lgtm history:
+	// accounts other than the (non-bot) author that approved the change.
+	approved_by:        [...string]
+	approval_sources:   [..."github-review" | "prow"]
+	// True when the comment/review history had more than one page, so an
+	// approval could be missing from the evidence.
+	history_truncated:  bool
 	status_check_state: string
 }]

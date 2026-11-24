@@ -34,6 +34,22 @@ rsc_default_branch() {
   if [[ -n "${RSC_BASE_REF:-}" ]]; then echo "${RSC_BASE_REF}"; else gh api "repos/$1" --jq .default_branch; fi
 }
 
+# Run a command, retrying a few times: GitHub's API returns transient 5xx
+# (e.g. HTTP 502/504) on heavy GraphQL queries.
+rsc_retry() {
+  local attempt out rc errf
+  errf="$(mktemp)"
+  for attempt in 1 2 3; do
+    if out="$("$@" 2>"${errf}")"; then rm -f "${errf}"; printf '%s' "${out}"; return 0; fi
+    rc=$?
+    grep -q -E 'HTTP 5[0-9][0-9]' "${errf}" || break
+    sleep $((attempt * 2))
+  done
+  cat "${errf}" >&2
+  rm -f "${errf}"
+  return "${rc}"
+}
+
 rsc_collect_all() {
   local out_dir="${EVIDENCE_DIR}/${AR_ID}" repo name err targets="[]" ok=0 failed=0
   mkdir -p "${out_dir}"

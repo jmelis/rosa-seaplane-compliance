@@ -20,57 +20,102 @@ if [[ -z "${GITHUB_TOKEN:-}" ]]; then
   exit 1
 fi
 
+# Prow (OpenShift CI) approves through `/lgtm` and `/approve` comments that
+# set the `lgtm` and `approved` labels, so GitHub's reviewDecision is mostly
+# empty. Labels alone do not say who approved, and a command alone does not
+# say it took effect (a command from someone Prow does not trust sets no
+# label). A Prow approval therefore counts only when BOTH labels are present
+# AND a non-author, non-bot account has an unretracted `/lgtm` in the comment
+# history, whether in a comment or in a review body. GitHub approving reviews
+# count directly.
+#
+# Normalized per PR: approved_by (non-author, non-bot accounts) and
+# approval_sources, so the Rego never needs to know about GitHub or Prow.
 collect_repo() {
-  local repo="$1" out="$2" owner="${1%%/*}" name="${1##*/}" base_ref raw
+  local repo="$1" out="$2" owner="${1%%/*}" name="${1##*/}" base_ref cutoff after="" page raw="[]" pages=0
   base_ref="$(rsc_default_branch "${repo}")" || return 1
-  raw="$(gh api graphql -f query='
-    query($owner: String!, $name: String!, $baseRefName: String!) {
-      repository(owner: $owner, name: $name) {
-        pullRequests(states: MERGED, baseRefName: $baseRefName, first: 100,
-                      orderBy: {field: UPDATED_AT, direction: DESC}) {
-          nodes {
-            number
-            mergedAt
-            author { login }
-            reviewDecision
-            mergedBy { login }
-            commits(last: 1) {
-              nodes { commit { statusCheckRollup { state } } }
+  cutoff="$(jq -nr --argjson d "${WINDOW_DAYS}" 'now - ($d * 86400) | gmtime | strftime("%Y-%m-%dT%H:%M:%SZ")')"
+
+  # Pages are ordered by UPDATED_AT (GitHub has no MERGED_AT sort). Keep going
+  # until a page reaches PRs last updated before the window, so a busy repo is
+  # not silently truncated. A PR merged inside the window was updated inside it.
+  while :; do
+    local args=(-f owner="${owner}" -f name="${name}" -f baseRefName="${base_ref}")
+    [[ -n "${after}" ]] && args+=(-f after="${after}")
+    page="$(rsc_retry gh api graphql -f query='
+      query($owner: String!, $name: String!, $baseRefName: String!, $after: String) {
+        repository(owner: $owner, name: $name) {
+          pullRequests(states: MERGED, baseRefName: $baseRefName, first: 50, after: $after,
+                        orderBy: {field: UPDATED_AT, direction: DESC}) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              number
+              mergedAt
+              updatedAt
+              author { login __typename }
+              mergedBy { login }
+              labels(first: 50) { nodes { name } }
+              latestOpinionatedReviews(first: 50) { nodes { state author { login __typename } } }
+              comments(first: 100) { pageInfo { hasNextPage } nodes { author { login __typename } body createdAt } }
+              reviews(first: 50) { pageInfo { hasNextPage } nodes { author { login __typename } body submittedAt } }
+              commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
             }
           }
         }
-      }
-    }' -f owner="${owner}" -f name="${name}" -f baseRefName="${base_ref}")" || return 1
+      }' "${args[@]}")" || return 1
+    # A GraphQL error (e.g. no access) can still exit 0 from gh; treat it as failure.
+    jq -e '.data.repository != null and (.errors | not)' <<<"${page}" >/dev/null || return 1
+    raw="$(jq -s '.[0] + .[1].data.repository.pullRequests.nodes' <(echo "${raw}") <(echo "${page}"))" || return 1
+    pages=$((pages + 1))
+    jq -e '.data.repository.pullRequests.pageInfo.hasNextPage' <<<"${page}" >/dev/null || break
+    jq -e --arg c "${cutoff}" '[.data.repository.pullRequests.nodes[].updatedAt] | (length > 0 and min >= $c)' <<<"${page}" >/dev/null || break
+    [[ "${pages}" -lt 20 ]] || { echo "more than 20 pages of merged PRs" >&2; return 1; }
+    after="$(jq -r '.data.repository.pullRequests.pageInfo.endCursor' <<<"${page}")"
+  done
 
-  jq --arg ar "${AR_ID}" --arg repo "${repo}" \
-    --arg base_ref "${base_ref}" \
-    --argjson window_days "${WINDOW_DAYS}" \
-    --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '
-    # A GraphQL error (e.g. no access) still exits 0 from gh; treat it as failure.
-    if .data.repository == null then error("no repository data returned") else . end
-    | ($window_days * 86400) as $window_seconds
-    | (now - $window_seconds | gmtime | strftime("%Y-%m-%dT%H:%M:%SZ")) as $cutoff
-    | {
-        assessment_requirement: $ar,
-        generated_at: $generated_at,
-        repository: $repo,
-        base_ref: $base_ref,
-        window_days: $window_days,
-        pull_requests: [
-          .data.repository.pullRequests.nodes[]
-          | select(.mergedAt >= $cutoff)
-          | {
-              number: .number,
-              merged_at: .mergedAt,
-              author: .author.login,
-              merged_by: .mergedBy.login,
-              review_decision: (.reviewDecision // "NONE"),
-              status_check_state: (.commits.nodes[0].commit.statusCheckRollup.state // "NONE")
-            }
-        ]
-      }
-    ' <<<"${raw}" >"${out}" || return 1
+  jq --arg ar "${AR_ID}" --arg repo "${repo}" --arg base_ref "${base_ref}" \
+    --argjson window_days "${WINDOW_DAYS}" --arg cutoff "${cutoff}" \
+    --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+    def human($a): $a != null and $a.login != null and ($a.__typename != "Bot");
+    def lgtm_by($author):
+      [ ((.comments.nodes | map({author, body, at: .createdAt}))
+         + (.reviews.nodes | map({author, body, at: .submittedAt})))
+        | sort_by(.at)[] | select(human(.author))
+        | {login: .author.login,
+           cmd: ([.body | split("\n")[] | gsub("\r"; "") | select(test("^/lgtm( cancel)?[ \t]*$"))] | last)}
+        | select(.cmd != null) ]
+      | group_by(.login) | map(last | select(.cmd | test("cancel") | not) | .login)
+      | map(select(. != $author));
+    {
+      assessment_requirement: $ar,
+      generated_at: $generated_at,
+      repository: $repo,
+      base_ref: $base_ref,
+      window_days: $window_days,
+      pull_requests: [
+        .[]
+        | select(.mergedAt >= $cutoff)
+        | (.author.login) as $author
+        | ([.labels.nodes[].name]) as $labels
+        | ([.latestOpinionatedReviews.nodes[]
+            | select(.state == "APPROVED" and human(.author) and .author.login != $author)
+            | .author.login]) as $reviewers
+        | (if ($labels | index("lgtm")) != null and ($labels | index("approved")) != null
+           then lgtm_by($author) else [] end) as $prow
+        | {
+            number: .number,
+            merged_at: .mergedAt,
+            author: $author,
+            merged_by: .mergedBy.login,
+            approved_by: ($reviewers + $prow | unique),
+            approval_sources: ([(if ($reviewers | length) > 0 then "github-review" else empty end),
+                                (if ($prow | length) > 0 then "prow" else empty end)]),
+            history_truncated: (.comments.pageInfo.hasNextPage or .reviews.pageInfo.hasNextPage),
+            status_check_state: (.commits.nodes[0].commit.statusCheckRollup.state // "NONE")
+          }
+      ]
+    }
+  ' <<<"${raw}" >"${out}" || return 1
 }
 
 rsc_collect_all

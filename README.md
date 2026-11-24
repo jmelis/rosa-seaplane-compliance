@@ -295,6 +295,7 @@ RSC_S3_BUCKET=rosa-seaplane-evidence RSC_S3_ENDPOINT_URL=http://localhost:9090 m
   per KSI reaching every in-scope target (see `make coverage`). `gemara/change-management`
   is still the only control domain.
 - `RSC.CMT.CTRL01.AR02` does not detect admin-bypass merges (needs the org audit log API).
+- `RSC.CMT.CTRL01.AR02` judges approval from a normalized `approved_by`, built by the collector from GitHub approving reviews and Prow `/lgtm` history (the team approves through Prow, so GitHub's review decision is mostly empty). A Prow approval counts only when both the `lgtm` and `approved` labels are present and a non-author, non-bot account has an unretracted `/lgtm` in a comment or review body. PRs where a bot applied its own labels (dependency-update bots) therefore have no human approver and are reported.
 - Containerfile tool versions are partly `@latest`; pin before relying on this for real evidence.
 - `opa-provider` is upstream-flagged as testing-only.
 - complyctl's top-level `variables:` (global, as opposed to `targets[].variables`)

@@ -7,18 +7,46 @@
   "pull_requests": [
     {
       "number": 201,
-      "merged_at": "2026-09-28T12:00:00Z",
+      "merged_at": "2026-09-06T12:00:00Z",
       "author": "alice",
-      "merged_by": "bob",
-      "review_decision": "APPROVED",
+      "merged_by": "openshift-merge-bot",
+      "approved_by": [
+        "bob"
+      ],
+      "approval_sources": [
+        "github-review"
+      ],
+      "history_truncated": false,
       "status_check_state": "SUCCESS"
     },
     {
       "number": 202,
-      "merged_at": "2026-09-29T09:30:00Z",
+      "merged_at": "2026-09-07T12:00:00Z",
       "author": "carol",
-      "merged_by": "dave",
-      "review_decision": "APPROVED",
+      "merged_by": "openshift-merge-bot",
+      "approved_by": [
+        "dave"
+      ],
+      "approval_sources": [
+        "prow"
+      ],
+      "history_truncated": false,
+      "status_check_state": "SUCCESS"
+    },
+    {
+      "number": 203,
+      "merged_at": "2026-09-08T12:00:00Z",
+      "author": "erin",
+      "merged_by": "openshift-merge-bot",
+      "approved_by": [
+        "frank",
+        "gina"
+      ],
+      "approval_sources": [
+        "github-review",
+        "prow"
+      ],
+      "history_truncated": false,
       "status_check_state": "SUCCESS"
     }
   ]
