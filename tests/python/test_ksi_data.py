@@ -62,7 +62,7 @@ class Records(unittest.TestCase):
 
     def test_shipped_records_load(self):
         records = ksi_data.load_records(self.ksis)
-        self.assertEqual(sorted(records), ["KSI-CMT-VTD", "KSI-IAM-SNU"])
+        self.assertEqual(sorted(records), ["KSI-CMT-LMC", "KSI-CMT-VTD", "KSI-IAM-SNU"])
         for r in records.values():
             # Empty or still marked "[Proposed, pending review]": neither counts as written.
             self.assertFalse(ksi_data.narrative_written(r))

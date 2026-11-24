@@ -51,6 +51,25 @@ def load_yaml(path: Path) -> dict:
     return yaml.safe_load(path.read_text()) or {}
 
 
+APPLICABILITY_TARGET = {"github_repositories": "github-repository", "aws_accounts": "aws-account"}
+
+
+def ar_target_types() -> dict:
+    """AR id -> target types, from each AR's applicability in the control catalogs.
+
+    A KSI can mix methods over different targets (GitHub repositories for one,
+    AWS accounts for another), so what each method must reach comes from the AR, not
+    from the KSI record.
+    """
+    out = {}
+    for catalog in sorted((ROOT / "gemara").glob("*/controls.yaml")):
+        for control in load_yaml(catalog).get("controls", []):
+            for ar in control.get("assessment-requirements", []):
+                out[ar["id"]] = [APPLICABILITY_TARGET[a] for a in ar.get("applicability", [])
+                                 if a in APPLICABILITY_TARGET]
+    return out
+
+
 def domains() -> list:
     """(policy id, policy doc, opa policy dir) for every gemara/<domain>/policy.yaml."""
     out = []
@@ -101,6 +120,7 @@ def gather() -> dict:
         "records": ksi_data.load_records(ksis),
         "repos": ksi_data.load_repo_scope(),
         "accounts": environment.account_names(),
+        "ar_target_types": ar_target_types(),
         "coverage": coverage, "triage": triage, "kinds": kinds,
         "ksi_maps": ksi_maps, "control_maps": control_maps,
         "manifests": manifests, "fixtures": fixtures,
@@ -149,7 +169,8 @@ def rollup_ksi(ksi_id: str, bucket: str, data: dict) -> dict:
             "fixtures": has_fixtures,
             "implemented": implemented,
             "rationale": data["ksi_maps"][ksi_id][ar],
-            "scope": method_scope(ar, target_types, data),
+            # Per AR when the catalogs say (a KSI can mix target types), else the KSI record's.
+            "scope": method_scope(ar, data.get("ar_target_types", {}).get(ar) or target_types, data),
         })
     implemented = [m for m in methods if m["implemented"]]
 

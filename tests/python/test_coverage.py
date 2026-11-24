@@ -214,3 +214,67 @@ class NextSteps(unittest.TestCase):
         ok = manifest(**{"org/a": "collected", "org/b": "collected"})
         d["manifests"] = {AR1: ok, AR2: ok}
         self.assertEqual(roll_ksi(d, "KSI-CMT-VTD")["next"], [])
+
+
+class MixedTargetTypes(unittest.TestCase):
+    """KSI-CMT-LMC has one GitHub method and one AWS method: each reaches its own targets."""
+
+    def data(self):
+        d = base_data()
+        gh, aws = AR2, "RSC.CMT.CTRL02.AR01"
+        d["coverage"][aws] = {"requirement_id": aws, "status": "implemented"}
+        d["triage"][aws] = {"requirement_id": aws, "executor": "opa"}
+        d["fixtures"] = d["fixtures"] | {aws}
+        d["kinds"][aws] = "Intent"
+        d["ksi_maps"]["KSI-CMT-LMC"] = {gh: "r", aws: "r"}
+        d["accounts"] = ["central", "regional"]
+        d["ar_target_types"] = {AR1: ["github-repository"], gh: ["github-repository"], aws: ["aws-account"]}
+        d["records"]["KSI-CMT-LMC"] = dict(tc_record(), ksi="KSI-CMT-LMC", **{"target-types": ["github-repository", "aws-account"]})
+        ok_repos = manifest(**{"org/a": "collected", "org/b": "collected"})
+        ok_accts = manifest(**{"central": "collected", "regional": "collected"})
+        d["manifests"] = {AR1: ok_repos, gh: ok_repos, aws: ok_accts}
+        return d, gh, aws
+
+    def scope(self, row, ar):
+        return next(m for m in row["methods"] if m["ar"] == ar)["scope"]
+
+    def test_each_method_expects_its_own_kind_of_target(self):
+        d, gh, aws = self.data()
+        row = roll_ksi(d, "KSI-CMT-LMC")
+        self.assertEqual((self.scope(row, gh)["reached"], self.scope(row, gh)["total"]), (2, 2))
+        self.assertEqual((self.scope(row, aws)["reached"], self.scope(row, aws)["total"]), (2, 2))
+        self.assertEqual(row["methods_implemented"], 2)
+        self.assertTrue(row["scope_full"])
+        self.assertEqual(row["state"], coverage.COVERED)
+
+    def test_a_missing_account_is_missing_scope_for_the_aws_method_only(self):
+        d, gh, aws = self.data()
+        d["manifests"][aws] = manifest(central="collected", regional="error")
+        row = roll_ksi(d, "KSI-CMT-LMC")
+        self.assertEqual(self.scope(row, aws)["missing"], ["regional"])
+        self.assertEqual(self.scope(row, gh)["missing"], [])
+        self.assertEqual(row["state"], coverage.IN_PROGRESS)
+
+    def test_a_missing_repo_is_missing_scope_for_the_github_method_only(self):
+        d, gh, aws = self.data()
+        d["manifests"][gh] = manifest(**{"org/a": "collected"})
+        row = roll_ksi(d, "KSI-CMT-LMC")
+        self.assertEqual(self.scope(row, gh)["missing"], ["org/b"])
+        self.assertEqual(self.scope(row, aws)["missing"], [])
+
+    def test_without_catalog_types_the_ksi_record_is_still_used(self):
+        d, gh, aws = self.data()
+        del d["ar_target_types"]
+        d["records"]["KSI-CMT-LMC"]["target-types"] = ["github-repository"]
+        row = roll_ksi(d, "KSI-CMT-LMC")
+        self.assertEqual(self.scope(row, gh)["total"], 2)
+
+    def test_ar_target_types_come_from_the_real_catalogs(self):
+        types = coverage.ar_target_types()
+        self.assertEqual(types["RSC.CMT.CTRL01.AR02"], ["github-repository"])
+        self.assertEqual(types["RSC.CMT.CTRL02.AR01"], ["aws-account"])
+        self.assertEqual(types["RSC.IAM.CTRL01.AR01"], ["aws-account"])
+
+
+def tc_record():
+    return dict(FULL_RECORD)
