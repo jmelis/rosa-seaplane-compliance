@@ -1,8 +1,13 @@
-# RSC.CMT.CTRL01.AR01: the default branch's protection configuration must
-# require a pull request with at least one approving review and passing status
-# checks, forbid force-pushes, and apply to administrators. Input: the JSON from
-# evidence/RSC.CMT.CTRL01.AR01.sh. Package name must match the "id" in
-# complytime-mapping.json.
+# RSC.CMT.CTRL01.AR01: the repository's merge gate for the default branch must
+# require approval from someone other than the author and passing status checks,
+# must be enforced so it cannot be bypassed (including by administrators), and
+# must forbid force-pushes. Input: the JSON from evidence/RSC.CMT.CTRL01.AR01.sh.
+# Package name must match the "id" in complytime-mapping.json.
+#
+# How approval is required varies (GitHub required reviews, or a merge bot such
+# as Prow Tide). The collector normalizes it into input.approval_gate, so this
+# policy reads one shape whatever the mechanism. Two separate facts are judged:
+# the gate exists (requires_approval) and GitHub enforces it (enforced_on_github).
 #
 # The opa provider evaluates every mapped package against every file in the
 # target's input_path, so each rule is guarded on the evidence's own
@@ -24,15 +29,25 @@ deny contains msg if {
 
 deny contains msg if {
 	applies
-	not review_required
+	not input.approval_gate.requires_approval == true
 	msg := sprintf(
-		"%s: required_pull_request_reviews is missing, null, or required_approving_review_count is 0 on %s",
-		[input.repository, input.branch],
+		"%s: no approval is required before merge to %s (mechanism=%s%s)",
+		[input.repository, input.branch, input.approval_gate.mechanism, unapproved_queries_note],
 	)
 }
 
-review_required if {
-	input.protection.required_pull_request_reviews.required_approving_review_count >= 1
+unapproved_queries_note := sprintf(", merge rules without an approval requirement for authors: %s", [concat(", ", input.approval_gate.queries_without_approval)]) if {
+	count(input.approval_gate.queries_without_approval) > 0
+} else := ""
+
+deny contains msg if {
+	applies
+	input.approval_gate.requires_approval == true
+	not input.approval_gate.enforced_on_github == true
+	msg := sprintf(
+		"%s: the approval requirement (%s) is not enforced on GitHub for %s, so a merge can skip it",
+		[input.repository, input.approval_gate.mechanism, input.branch],
+	)
 }
 
 deny contains msg if {

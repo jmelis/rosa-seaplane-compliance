@@ -20,17 +20,23 @@ if [[ -z "${GITHUB_TOKEN:-}" ]]; then
   exit 1
 fi
 
-# Prow (OpenShift CI) approves through `/lgtm` and `/approve` comments that
-# set the `lgtm` and `approved` labels, so GitHub's reviewDecision is mostly
-# empty. Labels alone do not say who approved, and a command alone does not
-# say it took effect (a command from someone Prow does not trust sets no
-# label). A Prow approval therefore counts only when BOTH labels are present
-# AND a non-author, non-bot account has an unretracted `/lgtm` in the comment
-# history, whether in a comment or in a review body. GitHub approving reviews
-# count directly.
+# Prow (OpenShift CI) approves through `/lgtm` (a reviewer) and `/approve` (an
+# OWNERS approver) commands that set the `lgtm` and `approved` labels, so
+# GitHub's reviewDecision is mostly empty. Prow also reads commands in review
+# bodies, and (review_acts_as_lgtm) treats an approving review as /lgtm. What
+# the team's merge gate (Tide) requires is both labels, so a Prow approval
+# counts here only when:
+#   - both the `lgtm` and `approved` labels are present, AND
+#   - a non-author, non-bot account has an unretracted `/lgtm` or `/approve`
+#     in a comment or review body made BEFORE the merge (a command on a closed
+#     PR does nothing), so the label is attributable to a person.
+# A bot that applies the labels to its own PR leaves no such command and so has
+# no approver; author_is_bot says so, without deciding what policy to apply.
+# GitHub approving reviews by non-authors count directly.
 #
-# Normalized per PR: approved_by (non-author, non-bot accounts) and
-# approval_sources, so the Rego never needs to know about GitHub or Prow.
+# Normalized per PR: approved_by (non-author, non-bot accounts), approval_sources
+# and author_is_bot, so the Rego never needs to know about GitHub or Prow.
+
 collect_repo() {
   local repo="$1" out="$2" owner="${1%%/*}" name="${1##*/}" base_ref cutoff after="" page raw="[]" pages=0
   base_ref="$(rsc_default_branch "${repo}")" || return 1
@@ -77,15 +83,16 @@ collect_repo() {
     --argjson window_days "${WINDOW_DAYS}" --arg cutoff "${cutoff}" \
     --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
     def human($a): $a != null and $a.login != null and ($a.__typename != "Bot");
-    def lgtm_by($author):
+    # Final state per commenter and command: the last of /x or /x cancel wins.
+    def commanders($author; $merged_at):
       [ ((.comments.nodes | map({author, body, at: .createdAt}))
          + (.reviews.nodes | map({author, body, at: .submittedAt})))
-        | sort_by(.at)[] | select(human(.author))
-        | {login: .author.login,
-           cmd: ([.body | split("\n")[] | gsub("\r"; "") | select(test("^/lgtm( cancel)?[ \t]*$"))] | last)}
-        | select(.cmd != null) ]
-      | group_by(.login) | map(last | select(.cmd | test("cancel") | not) | .login)
-      | map(select(. != $author));
+        | sort_by(.at)[] | select(human(.author) and .at <= $merged_at)
+        | .author.login as $login
+        | .body | split("\n")[] | gsub("\r"; "")
+        | capture("^/(?<cmd>lgtm|approve)(?<cancel> cancel)?[ \t]*$") | {login: $login, cmd, cancel: (.cancel != null and .cancel != "")} ]
+      | group_by([.login, .cmd]) | map(last | select(.cancel | not) | .login)
+      | unique | map(select(. != $author));
     {
       assessment_requirement: $ar,
       generated_at: $generated_at,
@@ -101,11 +108,12 @@ collect_repo() {
             | select(.state == "APPROVED" and human(.author) and .author.login != $author)
             | .author.login]) as $reviewers
         | (if ($labels | index("lgtm")) != null and ($labels | index("approved")) != null
-           then lgtm_by($author) else [] end) as $prow
+           then commanders($author; .mergedAt) else [] end) as $prow
         | {
             number: .number,
             merged_at: .mergedAt,
             author: $author,
+            author_is_bot: (.author.__typename == "Bot"),
             merged_by: .mergedBy.login,
             approved_by: ($reviewers + $prow | unique),
             approval_sources: ([(if ($reviewers | length) > 0 then "github-review" else empty end),

@@ -4,6 +4,11 @@
   "repository": "openshift-online/rosa-seaplane",
   "branch": "main",
   "protected": true,
+  "approval_gate": {
+    "mechanism": "none",
+    "requires_approval": false,
+    "enforced_on_github": false
+  },
   "protection": {
     "required_pull_request_reviews": {
       "required_approving_review_count": 0

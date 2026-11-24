@@ -32,6 +32,8 @@ deny contains msg if {
 
 truncation_note(pr) := " (comment history was truncated, so an approval may be missing from the evidence)" if {
 	pr.history_truncated == true
+} else := " (the author is a bot, so any approval labels were applied by the bot itself)" if {
+	pr.author_is_bot == true
 } else := ""
 
 deny contains msg if {

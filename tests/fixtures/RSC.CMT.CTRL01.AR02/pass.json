@@ -9,6 +9,7 @@
       "number": 201,
       "merged_at": "2026-09-06T12:00:00Z",
       "author": "alice",
+      "author_is_bot": false,
       "merged_by": "openshift-merge-bot",
       "approved_by": [
         "bob"
@@ -23,6 +24,7 @@
       "number": 202,
       "merged_at": "2026-09-07T12:00:00Z",
       "author": "carol",
+      "author_is_bot": false,
       "merged_by": "openshift-merge-bot",
       "approved_by": [
         "dave"
@@ -37,6 +39,7 @@
       "number": 203,
       "merged_at": "2026-09-08T12:00:00Z",
       "author": "erin",
+      "author_is_bot": false,
       "merged_by": "openshift-merge-bot",
       "approved_by": [
         "frank",

@@ -16,6 +16,9 @@ pull_requests: [...{
 	merged_at:          string
 	author:             string
 	merged_by:          string
+	// True when the author is a bot account. A bot that labels its own PR has no
+	// human approver; the policy decides what that means.
+	author_is_bot:      bool
 	// Normalized by the collector from GitHub reviews and Prow /lgtm history:
 	// accounts other than the (non-bot) author that approved the change.
 	approved_by:        [...string]

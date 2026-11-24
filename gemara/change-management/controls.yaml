@@ -10,17 +10,19 @@ controls:
     assessment-requirements:
       - id: RSC.CMT.CTRL01.AR01
         text: >
-          The default branch protection configuration for the repository must
-          require a pull request, at least one approving review, and passing
-          status checks, and must forbid direct pushes and force-pushes.
+          The repository's merge gate for the default branch must require a
+          pull request, approval from someone other than the author, and
+          passing status checks; that gate must be enforced so that it cannot
+          be bypassed, including by administrators; and direct pushes and
+          force-pushes must be forbidden.
         applicability:
           - github_repositories
         state: Active
       - id: RSC.CMT.CTRL01.AR02
         text: >
           Every pull request merged to the default branch in the evaluation
-          window must have carried a non-author approving review and passed
-          required status checks.
+          window must have carried a non-author approval and passed required
+          status checks.
         applicability:
           - github_repositories
         state: Active

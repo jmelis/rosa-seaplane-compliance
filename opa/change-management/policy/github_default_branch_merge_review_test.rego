@@ -9,6 +9,7 @@ compliant_pr := {
 	"number": 201,
 	"author": "alice",
 	"merged_by": "bob",
+	"author_is_bot": false,
 	"approved_by": ["bob"],
 	"approval_sources": ["github-review"],
 	"history_truncated": false,
@@ -54,6 +55,13 @@ test_truncated_history_is_noted if {
 	violations := deny with input as object.union(base, {"pull_requests": [pr]})
 	some msg in violations
 	contains(msg, "history was truncated")
+}
+
+test_bot_authored_without_approver_is_denied_and_says_so if {
+	pr := object.union(compliant_pr, {"author": "dep-bot", "author_is_bot": true, "approved_by": [], "approval_sources": []})
+	violations := deny with input as object.union(base, {"pull_requests": [pr]})
+	some msg in violations
+	contains(msg, "author is a bot")
 }
 
 test_self_merge_is_denied if {

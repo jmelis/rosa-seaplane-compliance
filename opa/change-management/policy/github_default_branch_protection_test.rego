@@ -9,8 +9,8 @@ compliant := {
 	"assessment_requirement": "RSC.CMT.CTRL01.AR01",
 	"repository": "openshift-online/example",
 	"branch": "main",
+	"approval_gate": {"mechanism": "github-required-reviews", "requires_approval": true, "enforced_on_github": true},
 	"protection": {
-		"required_pull_request_reviews": {"required_approving_review_count": 1},
 		"required_status_checks": {"strict": true, "contexts": ["ci"]},
 		"enforce_admins": {"enabled": true},
 		"allow_force_pushes": {"enabled": false},
@@ -21,17 +21,43 @@ test_compliant_passes if {
 	count(deny) == 0 with input as compliant
 }
 
-test_zero_reviews_denied if {
-	violations := deny with input as object.union(compliant, {"protection": {"required_pull_request_reviews": {"required_approving_review_count": 0}}})
-	some msg in violations
-	contains(msg, "required_pull_request_reviews")
-}
-
-test_missing_reviews_denied if {
-	i := json.remove(compliant, ["protection/required_pull_request_reviews"])
+test_no_approval_gate_denied if {
+	i := object.union(compliant, {"approval_gate": {"mechanism": "none", "requires_approval": false, "enforced_on_github": false}})
 	violations := deny with input as i
 	some msg in violations
-	contains(msg, "required_pull_request_reviews")
+	contains(msg, "no approval is required")
+	contains(msg, "mechanism=none")
+}
+
+test_tide_gate_enforced_on_github_passes if {
+	i := object.union(compliant, {"approval_gate": {"mechanism": "prow-tide", "requires_approval": true, "enforced_on_github": true}})
+	count(deny) == 0 with input as i
+}
+
+test_tide_gate_not_enforced_on_github_denied if {
+	i := object.union(compliant, {"approval_gate": {"mechanism": "prow-tide", "requires_approval": true, "enforced_on_github": false}})
+	violations := deny with input as i
+	count(violations) == 1
+	some msg in violations
+	contains(msg, "not enforced on GitHub")
+	contains(msg, "prow-tide")
+}
+
+test_tide_query_without_approval_requirement_denied_and_named if {
+	i := object.union(compliant, {"approval_gate": {
+		"mechanism": "prow-tide", "requires_approval": false, "enforced_on_github": true,
+		"queries_without_approval": ["dep-bot"],
+	}})
+	violations := deny with input as i
+	some msg in violations
+	contains(msg, "no approval is required")
+	contains(msg, "dep-bot")
+}
+
+test_unenforced_gate_is_not_reported_when_there_is_no_gate if {
+	i := object.union(compliant, {"approval_gate": {"mechanism": "none", "requires_approval": false, "enforced_on_github": false}})
+	violations := deny with input as i
+	count({m | some m in violations; contains(m, "not enforced")}) == 0
 }
 
 test_null_status_checks_denied if {
@@ -70,6 +96,7 @@ test_unprotected_branch_denied if {
 		"repository": "openshift-online/example",
 		"branch": "main",
 		"protected": false,
+		"approval_gate": {"mechanism": "none", "requires_approval": false, "enforced_on_github": false},
 		"protection": {},
 	}
 	some msg in violations

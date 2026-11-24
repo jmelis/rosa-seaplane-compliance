@@ -23,7 +23,16 @@ case "$args" in
     [[ "$name" == *ok* || "$name" == *unprot* ]] || { echo "gh: Resource not accessible by personal access token" >&2; exit 1; }
     cat "${FAKE_GH_DIR}/default.json"
     ;;
+  *"repos/openshift/release/contents/"*)
+    path="$(sed -n 's#.*contents/\([^ ]*\).*#\1#p' <<<"$args")"
+    f="${FAKE_GH_DIR}/prow/$(sed 's#.*02_config/##; s#/#__#g' <<<"$path")"
+    if [[ -f "${FAKE_GH_DIR}/prow-forbidden" ]]; then echo "gh: Resource not accessible (HTTP 403)" >&2; exit 1; fi
+    if [[ -f "$f" ]]; then cat "$f"; exit 0; fi
+    echo "gh: Not Found (HTTP 404)" >&2; exit 1
+    ;;
   *"/protection"*)
+    name="$(sed -n 's#.*repos/[^/]*/\([^/]*\)/branches.*#\1#p' <<<"$args")"
+    if [[ -f "${FAKE_GH_DIR}/protection-${name}.json" ]]; then cat "${FAKE_GH_DIR}/protection-${name}.json"; exit 0; fi
     case "$args" in
       *ok*) echo '{"enforce_admins":{"enabled":true}}' ;;
       *unprot*) echo "gh: Branch not protected (HTTP 404)" >&2; exit 1 ;;
@@ -43,12 +52,12 @@ def user(login, bot=False):
     return {"login": login, "__typename": "Bot" if bot else "User"}
 
 
-def pr(number, author="alice", labels=(), comments=(), reviews=(), opinionated=(), at=None, truncated=False):
+def pr(number, author="alice", author_bot=False, labels=(), comments=(), reviews=(), opinionated=(), at=None, truncated=False):
     """A GraphQL pull request node. comments/reviews are (login, body[, time])."""
     t = at or now()
     return {
         "number": number, "mergedAt": t, "updatedAt": t,
-        "author": user(author), "mergedBy": {"login": "openshift-merge-bot"},
+        "author": user(author, author_bot), "mergedBy": {"login": "openshift-merge-bot"},
         "labels": {"nodes": [{"name": n} for n in labels]},
         "latestOpinionatedReviews": {"nodes": [{"state": st, "author": user(a)} for a, st in opinionated]},
         "comments": {"pageInfo": {"hasNextPage": truncated},
@@ -143,6 +152,79 @@ class Collectors(unittest.TestCase):
         self.assertIn("openshift-online/rosa-seaplane-internal", names)
 
 
+TIDE = """tide:
+  queries:
+  - labels: [approved, lgtm, jira/valid-reference]
+    missingLabels: [do-not-merge/hold]
+    repos: [o/ok-g]
+"""
+TIDE_BOT_WITHOUT_LABELS = TIDE + """  - author: dep-bot
+    labels: [approved]
+    repos: [o/ok-g]
+"""
+
+
+class ApprovalGate(unittest.TestCase):
+    """How the AR01 collector normalizes the approval requirement and its enforcement."""
+
+    def collect(self, protection=None, prow=None, forbid_prow=False):
+        c = Collectors("test_one_failing_repo_does_not_stop_the_others")
+        c.setUp()
+        self.addCleanup(c.tmp.cleanup)
+        c.graphql  # noqa: B018 (shared fixture dir)
+        (c.fake_dir / "protection-ok-g.json").write_text(json.dumps(protection or {"enforce_admins": {"enabled": False}}))
+        if prow is not None:
+            (c.fake_dir / "prow").mkdir()
+            (c.fake_dir / "prow" / "o__ok-g___prowconfig.yaml").write_text(prow)
+        if forbid_prow:
+            (c.fake_dir / "prow-forbidden").write_text("")
+        res = c.run_collector(AR1, ["o/ok-g"])
+        self.c = c
+        return res
+
+    def gate(self):
+        return json.loads((self.c.out / AR1 / "ok-g.json").read_text())["approval_gate"]
+
+    def test_tide_gate_not_enforced_on_github(self):
+        self.assertEqual(self.collect(prow=TIDE).returncode, 0)
+        g = self.gate()
+        self.assertEqual((g["mechanism"], g["requires_approval"], g["enforced_on_github"]), ("prow-tide", True, False))
+
+    def test_tide_gate_enforced_by_merge_restrictions(self):
+        self.collect(protection={"restrictions": {"users": [], "teams": [], "apps": []}}, prow=TIDE)
+        self.assertIs(self.gate()["enforced_on_github"], True)
+
+    def test_tide_gate_enforced_by_requiring_the_tide_status(self):
+        self.collect(protection={"required_status_checks": {"strict": False, "contexts": ["ci/x", "tide"]}}, prow=TIDE)
+        self.assertIs(self.gate()["enforced_on_github"], True)
+
+    def test_other_status_contexts_do_not_enforce_the_gate(self):
+        self.collect(protection={"required_status_checks": {"strict": False, "contexts": ["ci/prow/x"]}}, prow=TIDE)
+        self.assertIs(self.gate()["enforced_on_github"], False)
+
+    def test_a_merge_rule_without_approval_labels_means_no_approval_requirement(self):
+        self.collect(prow=TIDE_BOT_WITHOUT_LABELS)
+        g = self.gate()
+        self.assertIs(g["requires_approval"], False)
+        self.assertEqual(g["queries_without_approval"], ["dep-bot"])
+
+    def test_no_prow_config_means_no_gate(self):
+        self.collect()
+        self.assertEqual(self.gate(), {"mechanism": "none", "requires_approval": False, "enforced_on_github": False})
+
+    def test_github_required_reviews_are_a_gate_enforced_by_github(self):
+        self.collect(protection={"required_pull_request_reviews": {"required_approving_review_count": 1}})
+        self.assertEqual(self.gate(), {"mechanism": "github-required-reviews", "requires_approval": True,
+                                       "enforced_on_github": True})
+
+    def test_failing_to_read_prow_config_is_an_error_not_no_gate(self):
+        res = self.collect(prow=TIDE, forbid_prow=True)
+        self.assertNotEqual(res.returncode, 0)  # the only repo failed
+        m = json.loads((self.c.out / AR1 / "manifest.json").read_text())
+        self.assertEqual(m["targets"][0]["status"], "error")
+        self.assertFalse((self.c.out / AR1 / "ok-g.json").exists())
+
+
 class Approval(unittest.TestCase):
     """How the AR02 collector normalizes GitHub and Prow approvals."""
 
@@ -170,6 +252,26 @@ class Approval(unittest.TestCase):
     def test_prow_approval_from_review_body(self):
         p = self.collect(pr(1, labels=self.LABELS, reviews=[("bob", "/lgtm\n/approve")]))
         self.assertEqual(p["approved_by"], ["bob"])
+
+    def test_approve_command_from_a_non_author_counts(self):
+        # Two-person Prow flow, as on rosa-seaplane PR 994: a reviewer /lgtm, an approver /approve.
+        p = self.collect(pr(1, labels=self.LABELS, comments=[("carol", "/lgtm"), ("dave", "/approve")]))
+        self.assertEqual(p["approved_by"], ["carol", "dave"])
+
+    def test_authors_own_approve_never_counts(self):
+        p = self.collect(pr(1, author="alice", labels=self.LABELS, comments=[("alice", "/approve")]))
+        self.assertEqual(p["approved_by"], [])
+
+    def test_commands_after_the_merge_do_not_count(self):
+        # rosa-seaplane PR 968: merged by hand, then /lgtm and /approve on the closed PR.
+        late = ("dana", "/lgtm\n/approve", "2099-01-01T00:00:00Z")
+        self.assertEqual(self.collect(pr(1, labels=self.LABELS, comments=[late]))["approved_by"], [])
+        early = ("dana", "/lgtm\n/approve", "2000-01-01T00:00:00Z")
+        self.assertEqual(self.collect(pr(1, labels=self.LABELS, comments=[early]))["approved_by"], ["dana"])
+
+    def test_author_is_bot_is_recorded(self):
+        self.assertIs(self.collect(pr(1, author="dep-bot", author_bot=True))["author_is_bot"], True)
+        self.assertIs(self.collect(pr(1))["author_is_bot"], False)
 
     def test_both_sources(self):
         p = self.collect(pr(1, labels=self.LABELS, comments=[("carol", "/lgtm")], opinionated=[("bob", "APPROVED")]))
@@ -242,3 +344,29 @@ class Approval(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Retry(unittest.TestCase):
+    """rsc_retry must report the command's real failure, and retry only 5xx."""
+
+    def run_retry(self, script):
+        out = subprocess.run(["bash", "-c", f'source "{ROOT}/evidence/lib/collect.sh"; sleep() {{ :; }}; {script}'],
+                             capture_output=True, text=True)
+        return out
+
+    def test_failure_is_not_swallowed(self):
+        res = self.run_retry('rsc_retry bash -c "echo gh: forbidden \\(HTTP 403\\) >&2; exit 1"; echo rc=$?')
+        self.assertIn("rc=1", res.stdout)
+        self.assertIn("HTTP 403", res.stderr)
+
+    def test_success_passes_output_through(self):
+        self.assertEqual(self.run_retry("rsc_retry echo hello").stdout, "hello")
+
+    def test_5xx_is_retried_then_succeeds(self):
+        script = ('n=$(mktemp); rsc_retry bash -c "c=\\$(cat $n 2>/dev/null || echo 0); echo \\$((c+1)) > $n; '
+                  '[ \\$c -ge 2 ] && echo ok || { echo gh: HTTP 504 >&2; exit 1; }"; echo " rc=$?"')
+        self.assertIn("ok rc=0", self.run_retry(script).stdout)
+
+    def test_4xx_is_not_retried(self):
+        script = ('n=$(mktemp); rsc_retry bash -c "echo x >> $n; echo gh: HTTP 404 >&2; exit 1"; echo calls=$(grep -c x $n)')
+        self.assertIn("calls=1", self.run_retry(script).stdout)

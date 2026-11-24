@@ -37,10 +37,11 @@ rsc_default_branch() {
 # Run a command, retrying a few times: GitHub's API returns transient 5xx
 # (e.g. HTTP 502/504) on heavy GraphQL queries.
 rsc_retry() {
-  local attempt out rc errf
+  local attempt out rc=0 errf
   errf="$(mktemp)"
   for attempt in 1 2 3; do
-    if out="$("$@" 2>"${errf}")"; then rm -f "${errf}"; printf '%s' "${out}"; return 0; fi
+    # Capture the status on the same line: `rc=$?` after an `if` reads 0.
+    out="$("$@" 2>"${errf}")" && { rm -f "${errf}"; printf '%s' "${out}"; return 0; }
     rc=$?
     grep -q -E 'HTTP 5[0-9][0-9]' "${errf}" || break
     sleep $((attempt * 2))
