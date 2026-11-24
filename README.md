@@ -16,6 +16,96 @@ The pieces map onto Gemara's layers, called out below as L2 through L5. L2 and L
 are authored here, L4 is run with complyctl, and L5 is collected. The
 MappingDocument ties the controls to each certification's requirement IDs.
 
+## Terms you'll meet
+
+Roughly in the order you run into them. If a name in the output means nothing to
+you, look here first.
+
+**The compliance frame**
+
+- **FedRAMP:** the US federal program that authorizes cloud services for
+  government use. **20x** is its newer path: instead of writing documents about
+  controls, a provider proves security with automated, machine-checkable evidence.
+  **Class C** is the 20x certification tier this project targets. It needs at
+  least 2 automated checks per KSI, and a daily history of results.
+- **KSI (Key Security Indicator):** a security outcome FedRAMP 20x asks you to
+  demonstrate, e.g. `KSI-CMT-VTD` ("Persistent testing and validation of changes
+  throughout deployment is automated"). There are 46. The ID is
+  `KSI-<family>-<abbreviation>` (`CMT` = Change Management). A KSI is a claim; it
+  is proven by evidence from ARs.
+- **NIST SP 800-53 and control IDs:** a US government catalog of security
+  controls, grouped into families with a two-letter prefix: `cm` Configuration
+  Management, `au` Audit and Accountability, `ac` Access Control, `ia`
+  Identification and Authentication, `ir` Incident Response, `si` System and
+  Information Integrity. `cm-3` is the control "Configuration Change Control"
+  (changes are reviewed, approved and tracked). `cm-3.2` is its second
+  enhancement, "testing, validation and documentation of changes"; the same ID is
+  written `CM-03 (02)` in our mapping files, and `scripts/fedramp_data.py`
+  converts between them. On the 20x path 800-53 is reference material, not a
+  requirement: each KSI lists **related controls** so you can check you did not
+  miss an angle.
+- **Control status per KSI:** a related control is **addressed** when one of our
+  ARs that serves the KSI maps to it, **inherited** or **not-applicable** when
+  the KSI record says so with a rationale, and **open** otherwise. It is a
+  property of the pair (KSI, control): `cm-3` can be addressed for one KSI and
+  open for another.
+- **SDR (Security Decision Record):** the document FedRAMP 20x asks for, in JSON
+  and human-readable form: per KSI, what is measured, how often, why the
+  measurement is trustworthy, and the evidence. `make sdr` generates it.
+
+**What this repo calls things**
+
+- **Control and control domain:** a **control** states something that must be
+  true, in certification-neutral language (e.g. `RSC.CMT.CTRL01`, reviewed and
+  validated changes to the default branch). A **control domain** is a subject-area
+  grouping, one directory under `gemara/`. `RSC` is the project prefix on every ID.
+- **AR (Assessment Requirement):** one testable condition under a control, e.g.
+  `RSC.CMT.CTRL01.AR01` (the merge gate is configured and enforced) or `AR02`
+  (every merged PR respected it). ARs are the unit of work: each has a check.
+- **Mapping (MappingDocument):** a file saying which KSI or 800-53 control an AR
+  provides evidence for, and why (the `rationale`). Adding a certification means
+  adding a mapping file; controls are never edited.
+- **Method:** an AR that is implemented as an automated check for a KSI. Class C
+  needs at least 2 per KSI, ideally of different kinds: **intent** (is it
+  configured?) and **behavioral** (did it hold in practice?).
+- **State vs result:** two separate signals. **State** (Not started, In progress,
+  Covered, SDR-ready) is how far the checks are implemented. **Result** (passed,
+  failed, not evaluated) is what the latest run found. A KSI can be fully
+  implemented and failing, or vice versa. Coverage never depends on pass/fail.
+- **Scope and manifest:** scope is the set of targets a check must reach (the 7
+  repositories today, AWS accounts later). Each collector writes a
+  `manifest.json` saying which targets it reached or failed to reach, so a repo
+  that was silently skipped is visible and is never mistaken for a pass.
+
+**The layers (Gemara)**
+
+- **Gemara** is the layered model our files are written in: **L1** guidance (the
+  external requirements, e.g. FedRAMP's data), **L2** controls and ARs
+  (`gemara/*/controls.yaml`), **L3** policy, which says which evaluator checks each
+  AR and how often (`gemara/*/policy.yaml`), **L4** the evaluation, and **L5** the
+  **EvaluationLog**, the record of one run with one result per AR.
+
+**The machinery**
+
+- **Collector and evidence:** a collector (`evidence/*.sh`) gathers raw facts
+  (GitHub API, later AWS) and normalizes them into **evidence**, a JSON file per
+  target in `evidence/output/`.
+- **Rego, OPA, conftest, evaluator:** the check itself is a Rego policy
+  (`opa/*/policy/*.rego`), run by OPA through conftest. The **evaluator** is the
+  complyctl provider that runs it (currently only `opa`).
+- **complytime, complyctl, complypack:** complytime is the project; `complyctl`
+  is its CLI, which runs a policy against the system and writes the EvaluationLog.
+  `complypack` packages the Rego for delivery and reports which ARs have a check.
+
+**Your merge process (it shows up in AR01 and AR02)**
+
+- **Prow, Tide and the labels:** Prow is OpenShift's CI system. **Tide** is its
+  merge bot: it merges a PR only when it carries the `lgtm` (a reviewer approved)
+  and `approved` (an OWNERS approver approved) labels and CI is green. People set
+  them with `/lgtm` and `/approve` comments, which Prow also reads in review
+  bodies. This replaces GitHub's own "required reviews", which is why AR01 and AR02
+  read Prow data. See "Known gaps" for what Prow does and does not enforce.
+
 ## The mental model
 
 ```mermaid
@@ -348,25 +438,3 @@ RSC_S3_BUCKET=rosa-seaplane-evidence RSC_S3_ENDPOINT_URL=http://localhost:9090 m
 - complyctl's top-level `variables:` (global, as opposed to `targets[].variables`)
   are not expanded for `${ENV_VAR}` references — only target-scoped variables
   are; flag if you hit this.
-
-## Glossary
-
-- **RSC (ROSA Seaplane Compliance):** the project prefix on every control and AR
-  ID (e.g. `RSC.CMT.CTRL01.AR01`), namespacing these IDs against any other
-  project's.
-- **Gemara:** the layered, machine-readable model the controls, policy, and
-  mappings are written in.
-- **complytime / complyctl:** complytime is the runtime project; `complyctl` is
-  its CLI, which runs the policy against the live system (Gemara L4) and emits the
-  EvaluationLog.
-- **Control domain:** one subject-area grouping of controls (e.g.
-  `change-management`), certification-independent; one directory under `gemara/`.
-- **AR (Assessment Requirement):** a single testable condition under a control,
-  e.g. `RSC.CMT.CTRL01.AR02`.
-- **Evaluator:** the complyctl provider plugin that runs a check (currently only `opa`).
-- **MappingDocument:** the file crosswalking ARs to one certification's
-  requirement IDs (FedRAMP KSI, NIST 800-53).
-- **EvaluationLog:** Gemara L5, the record of a single evaluation run, one result
-  per AR.
-- **KSI (Key Security Indicator):** a FedRAMP security outcome a provider must
-  demonstrate, e.g. `KSI-CMT-VTD`.
