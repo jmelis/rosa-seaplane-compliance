@@ -1,0 +1,42 @@
+# What each assessment requirement's check cannot see. A passing result means "no problem
+# found within these limits", never "no problem exists". Keyed by AR id; read by
+# scripts/build_findings.py and shown in its report next to the findings.
+#
+# GENERIC STRUCTURAL WORDING ONLY: this repository is public. Describe the check, never the
+# current state of a system (no repository, account or principal names, no PR numbers).
+# Each statement must be true of the collector and policy as written; when one of them
+# changes, change this. RSC.CMT.CTRL02.AR01 also lists, in config/prowler/checks.yaml, what
+# its chosen Prowler checks do not cover (`does-not-cover`); the report adds those itself.
+
+RSC.CMT.CTRL01.AR01:
+  - It checks configuration only. It shows the merge gate is set up and enforced, not that merges respected it (that is RSC.CMT.CTRL01.AR02).
+  - It reads classic branch protection for each repository's default branch. GitHub rulesets are not read, so a gate enforced only through rulesets would look unenforced.
+  - The approval requirement is read from the Prow Tide merge-bot configuration in the platform's configuration repository (repository-level and organization-level files). A gate defined anywhere else is not seen.
+  - A gate counts as enforced on GitHub only if branch protection restricts who may merge or requires the merge bot's own status check. Other mechanisms are not recognised.
+
+RSC.CMT.CTRL01.AR02:
+  - Merges by an administrator who bypasses the merge gate look like ordinary merges. Telling them apart needs the organization audit log, which is not read.
+  - Commits pushed straight to the default branch are not pull requests, so this check cannot see them. The configuration check is what is meant to forbid them.
+  - Only pull requests merged into the default branch inside the window are examined (30 days by default, RSC_WINDOW_DAYS). Collection fails, rather than truncating silently, past 20 pages of 50 merged pull requests.
+  - Approval history is read up to 100 comments and 50 reviews per pull request, and labels up to 50. A longer history sets history_truncated, and an approval beyond the cap would be missing from the evidence.
+  - Prow approvals are judged from the labels present now and from commands in comments and review bodies made before the merge. The history of labels being added and removed is not replayed.
+  - The automation exemption's commit check reads up to 100 commits per pull request. A pull request with more cannot meet it.
+  - The check state is the last commit's status rollup. It can include contexts that are not required, or that finish after the merge, so a non-passing state is not always a bypass of the gate.
+
+RSC.IAM.CTRL01.AR01:
+  - The credential report is a snapshot of when it was generated. A key created and deleted between two runs is never seen.
+  - Only the root user and IAM users are inventoried. Roles, federated identities and other kinds of principal are not.
+  - Only access keys are recorded. Console passwords, MFA devices, SSH keys and service-specific credentials are not.
+  - Only the accounts of the selected environment are examined.
+  - Long-term credentials outside AWS (source-control tokens, cluster service accounts) are outside this check; the KSI is therefore reported as partly implemented.
+
+RSC.IAM.CTRL01.AR02:
+  - access keys deleted inside the window cannot be listed, so they are not checked
+  - only management events in CloudTrail event history (the last 90 days) are searched; data-plane calls are not
+  - a session started with a key is seen only as the call made with the key, not followed afterwards
+  - Only the regions of the selected environment (always including the one that records global service calls) are searched.
+  - The search for a key stops at its first events, so it shows that a key was used but does not count how often (counts read "at least").
+
+RSC.CMT.CTRL02.AR01:
+  - Prowler's trail checks pass when any trail visible in the account is logging, including an organization-wide trail the account does not own. They do not confirm that the account has a trail of its own.
+  - The verdict on each fact is Prowler's, at the pinned version. A different version may measure a check differently, so the collector refuses any other version.

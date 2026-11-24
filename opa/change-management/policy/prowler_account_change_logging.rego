@@ -27,6 +27,11 @@ import rego.v1
 
 applies if input.assessment_requirement == "RSC.CMT.CTRL02.AR01"
 
+# Every denial carries a stable rule id as a trailing "[rule: <id>]", so reports can
+# group and explain findings. The message stays a plain string (complyctl records it
+# as is); config/findings/rules.yaml holds the title and fix hint for each id.
+with_rule(id, text) := sprintf("%s [rule: %s]", [text, id])
+
 required_checks := {
 	"cloudtrail_multi_region_enabled",
 	"cloudtrail_multi_region_enabled_logging_management_events",
@@ -44,7 +49,7 @@ results(check) := [f | some f in input.findings; f.check_id == check]
 deny contains msg if {
 	applies
 	not input.collection.complete == true
-	msg := sprintf("%s: the Prowler collection was incomplete, so nothing can be concluded", [input.target])
+	msg := with_rule("change-logging.collection-incomplete", sprintf("%s: the Prowler collection was incomplete, so nothing can be concluded", [input.target]))
 }
 
 # A required check with no result at all.
@@ -52,7 +57,7 @@ deny contains msg if {
 	applies
 	some check in required_checks
 	count(results(check)) == 0
-	msg := sprintf("%s: %s left no result, so it cannot be treated as passed", [input.target, check])
+	msg := with_rule("change-logging.check-no-result", sprintf("%s: %s left no result, so it cannot be treated as passed", [input.target, check]))
 }
 
 # A per-region check missing a result for a region that was checked.
@@ -62,7 +67,7 @@ deny contains msg if {
 	count(results(check)) > 0
 	some region in input.collection.regions
 	count([f | some f in results(check); f.region == region]) == 0
-	msg := sprintf("%s: %s left no result for region %s, so it cannot be treated as passed there", [input.target, check, region])
+	msg := with_rule("change-logging.check-no-region-result", sprintf("%s: %s left no result for region %s, so it cannot be treated as passed there", [input.target, check, region]))
 }
 
 deny contains msg if {
@@ -70,7 +75,7 @@ deny contains msg if {
 	some f in input.findings
 	f.check_id in required_checks
 	f.status == "FAIL"
-	msg := sprintf("%s: %s failed in %s for %s: %s", [input.target, f.check_id, f.region, f.resource_name, f.detail])
+	msg := with_rule("change-logging.check-failed", sprintf("%s: %s failed in %s for %s: %s", [input.target, f.check_id, f.region, f.resource_name, f.detail]))
 }
 
 deny contains msg if {
@@ -78,5 +83,5 @@ deny contains msg if {
 	some f in input.findings
 	f.check_id in required_checks
 	not f.status in {"PASS", "FAIL"}
-	msg := sprintf("%s: %s could not be assessed in %s (status %s): %s", [input.target, f.check_id, f.region, f.status, f.detail])
+	msg := with_rule("change-logging.check-not-assessed", sprintf("%s: %s could not be assessed in %s (status %s): %s", [input.target, f.check_id, f.region, f.status, f.detail]))
 }

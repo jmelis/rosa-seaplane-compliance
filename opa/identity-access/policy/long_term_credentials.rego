@@ -21,11 +21,16 @@ import rego.v1
 
 applies if input.assessment_requirement == "RSC.IAM.CTRL01.AR01"
 
+# Every denial carries a stable rule id as a trailing "[rule: <id>]", so reports can
+# group and explain findings. The message stays a plain string (complyctl records it
+# as is); config/findings/rules.yaml holds the title and fix hint for each id.
+with_rule(id, text) := sprintf("%s [rule: %s]", [text, id])
+
 # Zero principals is valid; an unread or partly read inventory is not.
 deny contains msg if {
 	applies
 	not input.collection.complete == true
-	msg := sprintf("%s: the credential inventory was incomplete, so nothing can be concluded", [input.target])
+	msg := with_rule("credentials.inventory-incomplete", sprintf("%s: the credential inventory was incomplete, so nothing can be concluded", [input.target]))
 }
 
 # One denial per principal and credential type, with how many are active (identical
@@ -42,8 +47,8 @@ deny contains msg if {
 		c.active == true
 		c.credential_type == credential.credential_type
 	])
-	msg := sprintf(
+	msg := with_rule("credentials.long-term-active", sprintf(
 		"%s: %s %s holds %d active long-term credential(s) (%s)",
 		[input.target, principal.principal_type, principal.name, n, credential.credential_type],
-	)
+	))
 }

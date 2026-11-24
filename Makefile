@@ -23,7 +23,7 @@ PYTHON               ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,pytho
 # not complyctl itself. Pulled from the CUE Central Registry.
 GEMARA_SCHEMA_VERSION ?= v1.6.0
 
-.PHONY: aws-role why env config validate test publish-policy publish-complypack build-image run-local run-image doctor coverage push-evidence sdr sdr-view trace
+.PHONY: findings aws-role why env config validate test publish-policy publish-complypack build-image run-local run-image doctor coverage push-evidence sdr sdr-view trace
 
 ## Explain why an AR failed: per-evidence-file denials and unreached targets.
 ## Usage: make why AR=RSC.CMT.CTRL01.AR02
@@ -109,6 +109,13 @@ sdr: coverage
 trace: coverage
 	$(PYTHON) scripts/build_trace.py
 
-## Render the SDR, coverage and AR trail as one offline HTML page: output/sdr/index.html.
+## Findings, gaps and limits in one deterministic report (no AI, no network): output/findings.json
+## and output/findings.md. Evaluates the policies over the evidence of the last `make run-local`.
+findings: coverage
+	$(PYTHON) scripts/build_findings.py
+
+## Render the SDR, coverage, AR trail and findings as one offline HTML page: output/sdr/index.html.
+## The findings need evidence from a run; without it the page is built without that tab.
 sdr-view: sdr trace
+	@$(PYTHON) scripts/build_findings.py || echo "NOTE: no Findings tab (run make run-local, then make findings)"
 	$(PYTHON) scripts/render_sdr_html.py

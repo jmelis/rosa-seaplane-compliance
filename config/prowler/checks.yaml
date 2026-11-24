@@ -82,8 +82,8 @@ assessment-requirements:
     # and security group changes) once the team decides which changes must alert.
     does-not-cover:
       - Alarms on specific kinds of change (network, IAM policy, security groups, storage policy, keys, organization); only an alarm on changes to the logging itself.
-      - Who receives an alarm, whether anyone responds, and whether the alarm has an action: the check confirms a filter and an alarm exist.
-      - How fresh the CloudWatch delivery is (the 24 hour check was left out, see above).
+      - Who receives an alarm, whether anyone responds, and whether the alarm has an action. The check only confirms that a filter and an alarm exist.
+      - How fresh the CloudWatch delivery is (the 24 hour delivery check was left out on purpose, see considered-and-left-out above).
       - Object-level data events, and the history of resource configuration.
       - Regions other than the ones checked (the environment's regions). A multi-region trail covers them, but only the checked regions are examined.
       - Modifications made to an account that is not in scope.

@@ -27,6 +27,11 @@ import rego.v1
 
 applies if input.assessment_requirement == "RSC.IAM.CTRL01.AR02"
 
+# Every denial carries a stable rule id as a trailing "[rule: <id>]", so reports can
+# group and explain findings. The message stays a plain string (complyctl records it
+# as is); config/findings/rules.yaml holds the title and fix hint for each id.
+with_rule(id, text) := sprintf("%s [rule: %s]", [text, id])
+
 # Defaults so that a missing or partial collection block still produces a denial
 # (a rule whose message cannot be formatted would silently produce none).
 lookup_errors := input.collection.lookup_errors if is_number(input.collection.lookup_errors) else := 0
@@ -36,10 +41,10 @@ window_days := input.collection.window_days if is_number(input.collection.window
 deny contains msg if {
 	applies
 	not input.collection.complete == true
-	msg := sprintf(
+	msg := with_rule("credential-use.log-not-searched", sprintf(
 		"%s: the audit log was not fully searched (%d lookup error(s)), so nothing can be concluded",
 		[input.target, lookup_errors],
-	)
+	))
 }
 
 # The source says the key was used in the window, but nothing in the audit log
@@ -51,10 +56,10 @@ deny contains msg if {
 	key.cross_checked == true
 	key.last_used_in_window == true
 	key.events_found == 0
-	msg := sprintf(
+	msg := with_rule("credential-use.log-shows-no-events", sprintf(
 		"%s: %s key ...%s was used in the window per the account, but the audit log shows no events for it (it may have been used only for calls the audit log does not record)",
 		[input.target, key.principal, key.key_suffix],
-	)
+	))
 }
 
 # Used somewhere that was not searched.
@@ -64,10 +69,10 @@ deny contains msg if {
 	key.cross_checked == true
 	key.last_used_in_window == true
 	key.last_used_region_checked == false
-	msg := sprintf(
+	msg := with_rule("credential-use.region-not-searched", sprintf(
 		"%s: %s key ...%s was last used in region %s, which was not searched",
 		[input.target, key.principal, key.key_suffix, key.last_used_region],
-	)
+	))
 }
 
 # One denial per principal, with how many events were seen (a lower bound when the
@@ -77,10 +82,10 @@ deny contains msg if {
 	some principal in {e.principal | some e in input.events; e.credential_type == "long-term"}
 	seen := sum([k.events_found | some k in input.keys; k.principal == principal])
 	more := count([k | some k in input.keys; k.principal == principal; k.events_truncated == true]) > 0
-	msg := sprintf(
+	msg := with_rule("credential-use.long-term-authentication", sprintf(
 		"%s: %s authenticated with a long-term credential in the last %d days (%s%d event(s))",
 		[input.target, principal, window_days, at_least(more), seen],
-	)
+	))
 }
 
 at_least(true) := "at least " 

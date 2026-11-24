@@ -16,6 +16,11 @@ import rego.v1
 
 applies if input.assessment_requirement == "RSC.CMT.CTRL01.AR02"
 
+# Every denial carries a stable rule id as a trailing "[rule: <id>]", so reports can
+# group and explain findings. The message stays a plain string (complyctl records it
+# as is); config/findings/rules.yaml holds the title and fix hint for each id.
+with_rule(id, text) := sprintf("%s [rule: %s]", [text, id])
+
 # Approval is normalized by the collector (GitHub reviews and Prow commands both
 # end up in approved_by), so this rule does not care how the team approves. The
 # author is filtered again here: an author's own approval never counts.
@@ -41,10 +46,10 @@ deny contains msg if {
 	some pr in input.pull_requests
 	count(approvers(pr)) == 0
 	not automation_exempt(pr)
-	msg := sprintf(
+	msg := with_rule("merge-review.no-approval", sprintf(
 		"%s: PR #%d (%s) merged to %s without a non-author approval%s",
 		[input.repository, pr.number, pr.author, input.base_ref, truncation_note(pr)],
-	)
+	))
 }
 
 truncation_note(pr) := " (comment history was truncated, so an approval may be missing from the evidence)" if {
@@ -59,28 +64,28 @@ deny contains msg if {
 	applies
 	some pr in input.pull_requests
 	pr.author == pr.merged_by
-	msg := sprintf(
+	msg := with_rule("merge-review.self-merge", sprintf(
 		"%s: PR #%d merged to %s by its own author (%s), bypassing the merge gate",
 		[input.repository, pr.number, input.base_ref, pr.author],
-	)
+	))
 }
 
 deny contains msg if {
 	applies
 	some pr in input.pull_requests
 	pr.status_check_state != "SUCCESS"
-	msg := sprintf(
+	msg := with_rule("merge-review.failing-checks", sprintf(
 		"%s: PR #%d merged to %s with non-passing status checks (status_check_state=%s)",
 		[input.repository, pr.number, input.base_ref, pr.status_check_state],
-	)
+	))
 }
 
 # Empty pull_requests would otherwise vacuously "pass" every rule above.
 deny contains msg if {
 	applies
 	count(input.pull_requests) == 0
-	msg := sprintf(
+	msg := with_rule("merge-review.no-merges-found", sprintf(
 		"%s: no merged pull requests found against %s in the evaluation window, cannot demonstrate the control; verify evidence/RSC.CMT.CTRL01.AR02.sh ran successfully and GITHUB_TOKEN has read access",
 		[input.repository, input.base_ref],
-	)
+	))
 }
