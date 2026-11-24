@@ -5,6 +5,9 @@ evidence/output/
 .complytime/*
 !.complytime/complytime.yaml
 
+# generated coverage, SDR and viewer output
+output/
+
 *.log
 __pycache__/
 *.pyc

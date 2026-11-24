@@ -23,14 +23,18 @@ flowchart LR
     CTRL["L2 controls.yaml<br/>ARs: what must be true"]
     POL["L3 policy.yaml<br/>AR to evaluator"]
     MAP["MappingDocument<br/>ARs to KSI / 800-53"]
-    BASE["baselines/*.yaml<br/>required set"]
+    DS["vendored FedRAMP dataset<br/>KSIs + related controls"]
+    KR["ksi/*.yaml<br/>KSI records"]
 
     CTRL --> POL --> CC["L4 complyctl<br/>+ evaluator (opa)"]
     CC -->|evaluates| TGT["target system"]
     CC --> LOG["L5 EvaluationLog<br/>(evidence)"]
 
-    MAP --> COVSC["coverage.py"]
-    BASE --> COVSC --> COV["coverage<br/>to the team"]
+    POL --> CP["complypack<br/>coverage, triage"]
+    CP --> COVSC["coverage.py"]
+    MAP --> COVSC
+    DS --> COVSC
+    KR --> COVSC --> COV["KSI coverage<br/>to the team"]
 
     LOG --> PUSH["push-evidence.sh"] --> S3["S3 evidence locker"]
 ```
@@ -49,16 +53,19 @@ flowchart LR
   and the *only* place a certification's vocabulary lives. Each file translates
   the ARs into one framework's requirements. Adding a certification is adding a
   mapping file; the control is never touched.
-- **Baselines** (`mappings/*.baseline.yaml`): the required set for a
-  certification, i.e. the denominator coverage measures against.
+- **FedRAMP dataset** (`mappings/vendor/fedramp/fedramp-consolidated-rules.json`):
+  the authority for the KSIs and their related controls, i.e. what coverage
+  measures against.
+- **KSI records** (`mappings/fedramp-20x/ksi/*.yaml`): the hand-written SDR
+  explanations and control exceptions that cannot be derived.
 
 ## What comes out
 
 | Output | Built by | Audience | Shape |
 | :-- | :-- | :-- | :-- |
-| **Coverage** | `coverage.py` | the team | Per certification, which required requirements the ARs cover (MappingDocument vs baseline), and where the gaps still are. |
+| **Coverage** | `coverage.py` | the team | Per KSI: implemented methods (via `complypack coverage` and `triage`), scope reached, related controls decided, explanations written. Never reads pass/fail. |
 
-Coverage needs no L5 EvaluationLog; it is derived from the authored YAML.
+Coverage means the checks are implemented. It needs no L5 EvaluationLog, and a failing check does not change it.
 
 ## Running an evaluation
 
@@ -215,9 +222,10 @@ aws --endpoint-url "$RSC_S3_ENDPOINT_URL" s3 ls --recursive "s3://$RSC_S3_BUCKET
 aws --endpoint-url "$RSC_S3_ENDPOINT_URL" s3 cp "s3://$RSC_S3_BUCKET/.../scan/report-...-opa-....md" -   # stream one object without downloading
 ```
 
-**`make coverage`** — no file artifact. `coverage.py` only prints to stdout
-(it takes no `--out`). Redirect it yourself if you want to keep a
-copy: `make coverage > /tmp/coverage-$(date +%s).txt`.
+**`make coverage`** — the KSI rollup: one row per in-phase KSI with its
+methods, scope, controls, narrative and state. Also writes
+`output/coverage.json` (gitignored). `make coverage KSI=KSI-CMT-VTD` drills
+into one KSI and lists what to do next. Needs `complypack` installed.
 
 ## Where evidence goes
 
@@ -247,12 +255,14 @@ RSC_S3_BUCKET=rosa-seaplane-evidence RSC_S3_ENDPOINT_URL=http://localhost:9090 m
 - `gemara/<domain>/` the L2 control catalog and L3 policy for one control domain,
   certification-independent (`change-management` is an example domain).
 - `mappings/*.mapping.yaml` one MappingDocument per certification (KSI, NIST 800-53).
-- `mappings/*.baseline.yaml` the required set per certification, read by `coverage.py`.
+- `mappings/fedramp-20x/` `ksi-scope.yaml` (which KSIs this phase builds) and `ksi/*.yaml` (KSI records).
+- `config/scope.yaml` the repositories in scope.
 - `mappings/vendor/fedramp/` unmodified copies of the FedRAMP Gemara layer
   files (NIST 800-53 guidance catalog, KSI control catalog, Class C policy)
-  that the mapping/baseline IDs and required-sets above are checked against.
-  Reference only — nothing in `scripts/` or `opa/` reads them directly.
-- `opa/<domain>/policy/*.rego` the Rego checks, one package per AR (e.g. `github_default_branch_merge_review.rego` for `RSC.CMT.CTRL01.AR02`). Each only judges evidence whose `assessment_requirement` matches its AR, authored per domain but published together as one project bundle.
+  that the mapping IDs above are checked against, plus the FedRAMP consolidated
+  rules dataset and SDR schemas. Only the dataset (`scripts/fedramp_data.py`) is
+  read by code; the `layer*` files are legacy reference.
+- `opa/<domain>/policy/*.rego` the Rego checks, one package per AR (e.g. `github_default_branch_merge_review.rego` for `RSC.CMT.CTRL01.AR02`). Each only judges evidence whose `assessment_requirement` matches its AR, authored per domain but published together as one complypack.
 - `evidence/<AR-FQDN>.*` one executable collector per AR, named by its AR FQDN (e.g. `RSC.CMT.CTRL01.AR01.sh`), pulling that AR's raw evidence (GitHub via `gh api` today). The entrypoint runs every executable here.
 - `scripts/` `coverage.py`, the `publish-*.sh` helpers, and `push-evidence.sh` (evidence -> S3 locker).
 - `.complytime/complytime.yaml` complyctl runtime config (policy refs, target, variables).
@@ -260,10 +270,9 @@ RSC_S3_BUCKET=rosa-seaplane-evidence RSC_S3_ENDPOINT_URL=http://localhost:9090 m
 
 ## Known gaps
 
-- Only 2 of 46 required KSIs are currently covered by a mapping (see
-  `make coverage`) — `gemara/change-management` is still the only control
-  domain; the baseline reflects the full Class C KSI set, so the gap is real
-  work, not a stub.
+- No KSI is covered yet: Class C needs at least 2 implemented automated methods
+  per KSI reaching every in-scope target (see `make coverage`). `gemara/change-management`
+  is still the only control domain.
 - `RSC.CMT.CTRL01.AR02` does not detect admin-bypass merges (needs the org audit log API).
 - Containerfile tool versions are partly `@latest`; pin before relying on this for real evidence.
 - `opa-provider` is upstream-flagged as testing-only.
@@ -290,7 +299,5 @@ RSC_S3_BUCKET=rosa-seaplane-evidence RSC_S3_ENDPOINT_URL=http://localhost:9090 m
   requirement IDs (FedRAMP KSI, NIST 800-53).
 - **EvaluationLog:** Gemara L5, the record of a single evaluation run, one result
   per AR.
-- **Baseline:** the required set of requirements for a certification; the
-  denominator coverage measures against.
 - **KSI (Key Security Indicator):** a FedRAMP security outcome a provider must
   demonstrate, e.g. `KSI-CMT-VTD`.

@@ -66,7 +66,6 @@ COPY .complytime/complytime.yaml ./.complytime/complytime.yaml
 COPY gemara/ ./gemara/
 COPY evidence/ ./evidence/
 COPY mappings/ ./mappings/
-COPY scripts/coverage.py ./scripts/coverage.py
 COPY containers/complyctl/entrypoint.py /usr/local/bin/entrypoint.py
 RUN chmod +x /usr/local/bin/entrypoint.py evidence/*.sh
 

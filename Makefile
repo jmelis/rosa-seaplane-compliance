@@ -54,11 +54,10 @@ run-image:
 doctor:
 	complyctl doctor --format text
 
-## Report KSI coverage: which required KSIs our ARs cover.
+## KSI coverage rollup over `complypack coverage`. KSI=<id> for a drill-down.
+## Also writes output/coverage.json.
 coverage:
-	python3 scripts/coverage.py \
-	  --baseline mappings/fedramp-class-c.ksi.baseline.yaml \
-	  --mapping mappings/change-management-to-ksi.mapping.yaml
+	python3 scripts/coverage.py $(if $(KSI),--ksi $(KSI))
 
 ## Push this run's evidence/output/ and .complytime/scan/ (the L5 EvaluationLog)
 ## to the shared evidence locker. Requires RSC_S3_BUCKET; see scripts/push-evidence.sh.
