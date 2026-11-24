@@ -3,17 +3,19 @@
 
 The role and every permission it needs are defined in
 config/aws/compliance-readonly-role.yaml. This script applies that file to the
-account an AWS profile points at. It is a stopgap until the role lives in the
-platform's Terraform.
+accounts of an environment. It is a stopgap until the role lives in the platform's
+Terraform.
 
-    aws_readonly_role.py plan   --profile P     show what would change (no writes)
-    aws_readonly_role.py apply  --profile P --yes   create or update the role
-    aws_readonly_role.py verify --profile P     assume the role and prove it reads
-                                                and cannot write
-    aws_readonly_role.py delete --profile P --yes   remove the role
+    aws_readonly_role.py plan   --env integration [--account A|all]
+    aws_readonly_role.py apply  --env integration [--account A|all] --yes
+    aws_readonly_role.py verify --env integration [--account A|all]
+    aws_readonly_role.py delete --env integration [--account A|all] --yes
 
-`plan` is the default and never writes. Output never includes account IDs: they are
-masked, and the profile must be an administrator for `apply` and `delete`.
+Access is set up as the platform's own dev scripts do (see scripts/aws_access.py):
+a temporary AWS config built from the account snapshot, never ~/.aws/config.
+`apply` and `delete` use each account's ADMIN profile (the role has to be created
+by someone who can create roles); `verify` uses the read-only profile the collectors
+will use. `plan` never writes. Output never includes account IDs.
 """
 import argparse
 import json
@@ -23,6 +25,11 @@ import sys
 from pathlib import Path
 
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import aws_access  # noqa: E402
+import environment  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFINITION = ROOT / "config/aws/compliance-readonly-role.yaml"
@@ -130,33 +137,30 @@ def cmd_apply(args, d) -> None:
 def cmd_verify(args, d) -> None:
     acct = account_id(args.profile)
     arn = f"arn:aws:iam::{acct}:role/{d['role-name']}"
-    role = existing(args.profile, d["role-name"])
-    if not role:
+    if not existing(args.profile, d["role-name"]):
         raise SystemExit("ERROR: the role does not exist; run apply first")
     # Write probes use the policy simulator from the admin session: nothing is executed.
     sim = json.loads(aws(args.profile, "iam", "simulate-principal-policy", "--policy-source-arn", arn,
                          "--action-names", *WRITE_PROBES))
     allowed = [r["EvalActionName"] for r in sim["EvaluationResults"] if r["EvalDecision"] == "allowed"]
-    print("write probes the role would be allowed (must be none):", allowed or "none")
+    print("  write probes the role would be allowed (must be none):", allowed or "none")
     if allowed:
         raise SystemExit("ERROR: the role can write; refusing to call it read-only")
-    creds = json.loads(aws(args.profile, "sts", "assume-role", "--role-arn", arn,
-                           "--role-session-name", "rsc-verify", "--duration-seconds", "900"))["Credentials"]
-    env = {**__import__("os").environ, "AWS_ACCESS_KEY_ID": creds["AccessKeyId"], "AWS_SECRET_ACCESS_KEY": creds["SecretAccessKey"],
-           "AWS_SESSION_TOKEN": creds["SessionToken"], "AWS_PAGER": "", "AWS_PROFILE": ""}
-    env.pop("AWS_PROFILE")
-    checks = [("iam generate-credential-report", ["iam", "generate-credential-report"]),
-              ("cloudtrail lookup-events", ["cloudtrail", "lookup-events", "--max-results", "1", "--region", "us-east-1"]),
-              ("iam list-users", ["iam", "list-users", "--max-items", "1"])]
+    # Reads run through the real read-only profile, exactly as the collectors will.
+    ro = args.ro_profile
+    who = json.loads(aws(ro, "sts", "get-caller-identity"))["Arn"]
+    if f"assumed-role/{d['role-name']}/" not in who:
+        raise SystemExit(f"ERROR: the read-only profile is not using the read-only role ({mask(who)})")
     bad = False
-    for label, a in checks:
-        res = subprocess.run(["aws", *a, "--output", "json"], capture_output=True, text=True, env=env)
-        ok = res.returncode == 0
+    for label, a in [("iam generate-credential-report", ["iam", "generate-credential-report"]),
+                     ("cloudtrail lookup-events", ["cloudtrail", "lookup-events", "--max-results", "1", "--region", "us-east-1"]),
+                     ("iam list-users", ["iam", "list-users", "--max-items", "1"])]:
+        ok = bool(aws(ro, *a, check=False))
         bad = bad or not ok
-        print(f"  {'ok  ' if ok else 'FAIL'} {label}" + ("" if ok else f": {mask(res.stderr.strip())[:160]}"))
+        print(f"  {'ok  ' if ok else 'FAIL'} {label}")
     if bad:
         raise SystemExit("ERROR: the role cannot do something it needs")
-    print("verified: reads work, writes are not allowed.")
+    print("  verified: reads work, writes are not allowed.")
 
 
 def cmd_delete(args, d) -> None:
@@ -177,14 +181,28 @@ def cmd_delete(args, d) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", choices=["plan", "apply", "verify", "delete"])
-    ap.add_argument("--profile", required=True)
+    ap.add_argument("--env", default=None, help="environment (default: $RSC_ENV or integration)")
+    ap.add_argument("--account", default="all", help="logical account name, or all")
     ap.add_argument("--yes", action="store_true", help="required for apply and delete")
     args = ap.parse_args()
     try:
         d = load_definition()
-    except DefinitionError as e:
-        sys.exit(f"ERROR: {e}")
-    {"plan": cmd_plan, "apply": cmd_apply, "verify": cmd_verify, "delete": cmd_delete}[args.command](args, d)
+        env = environment.load(args.env)
+        names = [a["name"] for a in env["accounts"]]
+        chosen = names if args.account == "all" else [args.account]
+        unknown = [n for n in chosen if n not in names]
+        if unknown:
+            raise SystemExit(f"ERROR: unknown account {unknown}; this environment has: {', '.join(names)}")
+        if args.command in ("apply", "delete") and not args.yes:
+            raise SystemExit("ERROR: refusing to write without --yes (run `plan` first)")
+        with aws_access.aws_environment(env):
+            for name in chosen:
+                print(f"== {env['name']} / {name}")
+                args.profile = aws_access.admin_profile(name)
+                args.ro_profile = aws_access.readonly_profile(name)
+                {"plan": cmd_plan, "apply": cmd_apply, "verify": cmd_verify, "delete": cmd_delete}[args.command](args, d)
+    except (DefinitionError, environment.EnvironmentError_, aws_access.AccessError) as e:
+        sys.exit(f"ERROR: {mask(str(e))}")
 
 
 if __name__ == "__main__":

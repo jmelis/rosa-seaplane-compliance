@@ -93,6 +93,23 @@ class Safety(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 fn(argparse.Namespace(profile="p", yes=False), r.load_definition())
 
+    def test_main_refuses_to_write_without_yes_before_touching_aws(self):
+        from unittest import mock
+        for cmd in ("apply", "delete"):
+            with mock.patch.object(sys, "argv", ["x", cmd, "--env", "integration"]):
+                with mock.patch.object(r.aws_access, "aws_environment", side_effect=AssertionError("touched AWS")):
+                    with self.assertRaises(SystemExit) as cm:
+                        r.main()
+                    self.assertIn("--yes", str(cm.exception))
+
+    def test_unknown_account_is_rejected_before_touching_aws(self):
+        from unittest import mock
+        with mock.patch.object(sys, "argv", ["x", "plan", "--env", "integration", "--account", "nope"]):
+            with mock.patch.object(r.aws_access, "aws_environment", side_effect=AssertionError("touched AWS")):
+                with self.assertRaises(SystemExit) as cm:
+                    r.main()
+                self.assertIn("unknown account", str(cm.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""Resolve an environment (config/environments/<name>.yaml) and its AWS profiles.
+"""Load an environment definition (config/environments/<name>.yaml).
 
-The config holds only regions and logical account names. Which AWS profile
-reaches each account comes from environment variables, so nothing sensitive is
-committed:
+The definition holds regions, logical account names and where each account's ID
+sits in the platform's account snapshot, and nothing sensitive. AWS access for it
+is set up by scripts/aws_access.py.
 
-    RSC_AWS_PROFILE_<ENV>_<ACCOUNT>   e.g. RSC_AWS_PROFILE_INTEGRATION_REGIONAL
-
-    environment.py [name]       print the resolved environment (default: $RSC_ENV
-                                or integration); profile *names* are not printed
+    environment.py [name]       print the environment (default: $RSC_ENV or
+                                integration) and whether its accounts can be resolved
 """
 import os
 import re
@@ -26,16 +24,12 @@ class EnvironmentError_(ValueError):
     pass
 
 
-def profile_var(env: str, account: str) -> str:
-    return "RSC_AWS_PROFILE_" + re.sub(r"[^A-Za-z0-9]", "_", f"{env}_{account}").upper()
-
-
 def available(env_dir: Path = ENV_DIR) -> list:
     return sorted(p.stem for p in env_dir.glob("*.yaml"))
 
 
 def load(name: str = None, environ: dict = None, env_dir: Path = ENV_DIR) -> dict:
-    """{name, regions, accounts: [{name, profile_var, profile}]}; profile is None if unset."""
+    """{name, regions, snapshot, saml_role, accounts: [{name, snapshot_path}]}."""
     environ = os.environ if environ is None else environ
     name = name or environ.get("RSC_ENV") or DEFAULT_ENV
     path = env_dir / f"{name}.yaml"
@@ -44,23 +38,33 @@ def load(name: str = None, environ: dict = None, env_dir: Path = ENV_DIR) -> dic
     doc = yaml.safe_load(path.read_text()) or {}
     if doc.get("name") != name:
         raise EnvironmentError_(f"{path.name}: name must be {name!r}")
+    for key in ("snapshot", "saml-role", "accounts"):
+        if not doc.get(key):
+            raise EnvironmentError_(f"{path.name}: missing {key}")
+    if not re.fullmatch(r"[a-z0-9-]+", str(doc["snapshot"])):
+        raise EnvironmentError_(f"{path.name}: bad snapshot name")
     accounts = []
-    for account in doc.get("accounts") or []:
-        var = profile_var(name, account)
-        accounts.append({"name": account, "profile_var": var, "profile": environ.get(var) or None})
-    return {"name": name, "regions": list(doc.get("regions") or []), "accounts": accounts}
+    for account, spec in doc["accounts"].items():
+        if not re.fullmatch(r"[a-z0-9-]+", account) or not (spec or {}).get("snapshot-path"):
+            raise EnvironmentError_(f"{path.name}: account {account!r} needs a name and a snapshot-path")
+        accounts.append({"name": account, "snapshot_path": spec["snapshot-path"]})
+    return {"name": name, "regions": list(doc.get("regions") or []), "snapshot": doc["snapshot"],
+            "saml_role": doc["saml-role"], "accounts": accounts}
 
 
 def main() -> None:
+    import aws_access
     try:
         env = load(sys.argv[1] if len(sys.argv) > 1 else None)
-    except EnvironmentError_ as e:
+        status = aws_access.describe(env)
+    except (EnvironmentError_, aws_access.AccessError) as e:
         sys.exit(f"ERROR: {e}")
     print(f"environment: {env['name']}  regions: {', '.join(env['regions'])}")
+    print(f"  account snapshot: {status['snapshot']}")
     for a in env["accounts"]:
-        state = "set" if a["profile"] else "NOT SET"
-        print(f"  {a['name']:<20} {a['profile_var']} {state}")
+        print(f"  {a['name']:<20} {'resolvable' if status['resolved'].get(a['name']) else 'NOT FOUND in snapshot'}")
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
     main()

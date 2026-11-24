@@ -1,14 +1,21 @@
 # Logical shape of the `integration` environment for local runs: regions and account
-# names only. NEVER put account IDs, ARNs or profile names here (this repo is
-# public).
+# names only, plus where each account's ID sits in the platform's account snapshot.
+# NEVER put account IDs, ARNs or profile names here (this repo is public).
 #
-# Each account is reached through an AWS profile named by the environment
-# variable RSC_AWS_PROFILE_<ENV>_<ACCOUNT> (upper case, '-' as '_'), e.g.
-# RSC_AWS_PROFILE_INTEGRATION_REGIONAL. Set them in the gitignored .envrc; see
-# docs/credentials.md. Use read-only profiles only.
+# AWS access follows the platform's own dev scripts (rosa-seaplane
+# scripts/dev/*-env.sh): scripts/aws_access.py builds a temporary AWS config from
+# the snapshot in rosa-seaplane-internal and logs in with the same SAML helper. It
+# never reads or writes ~/.aws/config. See docs/credentials.md.
 name: integration
 regions: [us-east-1]
+# Directory under rosa-seaplane-internal/infra/accounts/ holding terragrunt-accounts.json.
+snapshot: int
+# SAML role (suffix after "<central account id>-") that logs in to the control account.
+saml-role: rosa-hyperfleet-int-admin
 accounts:
-  - central
-  - regional
-  - management-cluster
+  central:
+    snapshot-path: control_account_id
+  regional:
+    snapshot-path: "{region}.rc_account_id"
+  management-mc01:
+    snapshot-path: "{region}.mc_account_ids.mc01"

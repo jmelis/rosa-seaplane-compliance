@@ -93,24 +93,41 @@ no-op local credentials, fine to keep in a shell history or a local
 
 Local runs evaluate one environment, `integration` by default. Switch with
 `make run-local RSC_ENV=stage`: the checks and scope are identical, only the AWS
-profiles differ.
+accounts differ.
 
-`config/environments/<env>.yaml` lists the environment's regions and logical
-accounts (`central`, `regional`, `management-cluster`), and nothing else: no
-account IDs, ARNs or profile names, because this repo is public. Each account is
-reached through an AWS profile named by an environment variable:
+**Access works the way the platform's own dev scripts do** (`rosa-seaplane`
+`scripts/dev/int-env.sh`, `stage-env.sh`), and never reads or writes your
+`~/.aws/config`:
+
+- The account IDs come from the platform's account snapshot,
+  `../rosa-seaplane-internal/infra/accounts/<int|stage>/terragrunt-accounts.json`
+  (clone `rosa-seaplane-internal` as a sibling, or set `RSC_ACCOUNTS_FILE`).
+- `scripts/aws_access.py` writes a **temporary** AWS config from it, logs in with the
+  same SAML helper (`../rosa-seaplane/scripts/dev/cached_saml_credentials_process.py`,
+  run through `uv`; set `RSC_SEAPLANE_REPO` if your checkout lives elsewhere), and
+  deletes the config afterwards. It needs the same Kerberos login those scripts need.
+- `config/environments/<env>.yaml` lists only the logical accounts (`central`,
+  `regional`, `management-mc01`, ...) and where each one's ID sits in the snapshot.
+  **Account IDs are never committed**; a test fails if one appears in any tracked file.
+
+Profiles in the temporary config: `rsc-admin` (SAML login into the control account),
+`rsc-<account>-admin` (admin role in a child account) and `rsc-<account>-ro` (the
+compliance read-only role). The checks use only the `-ro` profiles.
+
+**The read-only role.** `config/aws/compliance-readonly-role.yaml` defines it and
+records every permission with the check that needs it. Until it lives in the
+platform's Terraform, `make aws-role` manages it (admin is needed only for that):
 
 ```bash
-# .envrc (gitignored)
-export RSC_AWS_PROFILE_INTEGRATION_CENTRAL=...
-export RSC_AWS_PROFILE_INTEGRATION_REGIONAL=...
-export RSC_AWS_PROFILE_INTEGRATION_MANAGEMENT_CLUSTER=...
-# and RSC_AWS_PROFILE_STAGE_* for stage
+make aws-role ACTION=plan                # default: show what would change, writes nothing
+make aws-role ACTION=apply YES=1         # create or update it in every account of RSC_ENV
+make aws-role ACTION=verify              # reads work through the -ro profile, writes are denied
+make aws-role ACTION=delete YES=1
+# optional: ACCOUNT=regional (default: all)
 ```
 
-`make env` shows which of them are set (it never prints the profile names).
-Use **read-only** profiles only; never the `rosa-seaplane-account-admin` role.
-The permissions the AWS checks need are listed with the checks that use them.
+`make env` shows the selected environment and whether each account resolves from the
+snapshot. Never use an admin profile for the checks themselves.
 
 ## OCI registry — not evidence collection, but part of the pipeline
 
