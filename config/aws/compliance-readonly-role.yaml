@@ -52,3 +52,11 @@ actions:
     needed-by: KSI-IAM-SNU behavior method (cross-check each key's last use against the audit log)
   - action: iam:GetAccountSummary
     needed-by: KSI-IAM-SNU behavior method (does the root user have any access key)
+  - action: codepipeline:ListPipelineExecutions
+    needed-by: Post-merge deployment method for KSI-CMT-VTD (did the latest pipeline execution succeed)
+  - action: codepipeline:GetPipelineExecution
+    needed-by: Post-merge deployment method for KSI-CMT-VTD (which commit an execution applied)
+  - action: codepipeline:GetPipelineState
+    needed-by: Post-merge deployment method for KSI-CMT-VTD (is an execution in progress)
+  - action: codepipeline:ListActionExecutions
+    needed-by: Post-merge deployment method for KSI-CMT-VTD (read the applied-commit output variable of the Apply step)
