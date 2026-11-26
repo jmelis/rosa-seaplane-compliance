@@ -4,6 +4,12 @@
   "repository": "openshift-online/rosa-seaplane",
   "base_ref": "main",
   "window_days": 30,
+  "branch_protected": true,
+  "check_runs_readable": true,
+  "required_contexts": [
+    "ci/build",
+    "ci/lint"
+  ],
   "pull_requests": [
     {
       "number": 201,
@@ -25,7 +31,18 @@
         "github-review"
       ],
       "history_truncated": false,
-      "status_check_state": "SUCCESS"
+      "status_check_state": "PENDING",
+      "required_checks": [
+        {
+          "context": "ci/build",
+          "result": "success"
+        },
+        {
+          "context": "ci/lint",
+          "result": "success"
+        }
+      ],
+      "checks_complete": true
     },
     {
       "number": 202,
@@ -47,7 +64,18 @@
         "prow"
       ],
       "history_truncated": false,
-      "status_check_state": "SUCCESS"
+      "status_check_state": "PENDING",
+      "required_checks": [
+        {
+          "context": "ci/build",
+          "result": "success"
+        },
+        {
+          "context": "ci/lint",
+          "result": "success"
+        }
+      ],
+      "checks_complete": true
     },
     {
       "number": 203,
@@ -71,7 +99,18 @@
         "prow"
       ],
       "history_truncated": false,
-      "status_check_state": "SUCCESS"
+      "status_check_state": "PENDING",
+      "required_checks": [
+        {
+          "context": "ci/build",
+          "result": "success"
+        },
+        {
+          "context": "ci/lint",
+          "result": "success"
+        }
+      ],
+      "checks_complete": true
     },
     {
       "number": 204,
@@ -89,7 +128,18 @@
       "approved_by": [],
       "approval_sources": [],
       "history_truncated": false,
-      "status_check_state": "SUCCESS"
+      "status_check_state": "PENDING",
+      "required_checks": [
+        {
+          "context": "ci/build",
+          "result": "success"
+        },
+        {
+          "context": "ci/lint",
+          "result": "success"
+        }
+      ],
+      "checks_complete": true
     }
   ]
 }

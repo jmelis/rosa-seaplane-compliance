@@ -11,6 +11,13 @@ generated_at:           string
 repository:             string
 base_ref:               string
 window_days:            number
+// False when the branch has no protection at all; then no check is required.
+branch_protected: bool
+// The status check contexts the branch protection requires (current configuration).
+required_contexts: [...string]
+// False when the repository's check runs cannot be read with the collector's token
+// (a private repository and a fine-grained token): only commit statuses are judged.
+check_runs_readable: bool
 pull_requests: [...{
 	number:             number
 	merged_at:          string
@@ -35,5 +42,18 @@ pull_requests: [...{
 	// True when the comment/review history had more than one page, so an
 	// approval could be missing from the evidence.
 	history_truncated:  bool
+	// What each REQUIRED context did on the PR's last commit. Only `success` passes.
+	// neutral = a check run that concluded neutral or skipped; missing = the context
+	// never reported; unknown = check runs are unreadable and the context is not among
+	// the readable statuses. The overall rollup is not judged.
+	required_checks: [...{
+		context: string
+		result:  "success" | "failure" | "pending" | "neutral" | "missing" | "unknown"
+	}]
+	// False when the PR's status contexts could not all be read (more than the
+	// collector's paging bound), so a required check may be missing from the evidence.
+	checks_complete: bool
+	// The overall rollup of the last commit. For debugging only: it includes
+	// contexts that are not required and is never judged.
 	status_check_state: string
 }]

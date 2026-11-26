@@ -21,7 +21,12 @@ RSC.CMT.CTRL01.AR02:
   - Approval history is read up to 100 comments and 50 reviews per pull request, and labels up to 50. A longer history sets history_truncated, and an approval beyond the cap would be missing from the evidence.
   - Prow approvals are judged from the labels present now and from commands in comments and review bodies made before the merge. The history of labels being added and removed is not replayed.
   - The automation exemption's commit check reads up to 100 commits per pull request. A pull request with more cannot meet it.
-  - The check state is the last commit's status rollup. It can include contexts that are not required, or that finish after the merge, so a non-passing state is not always a bypass of the gate.
+  - Only the checks the branch protection requires are judged, on each PR's last commit. The required list is read from the current protection configuration, which may differ from the configuration at the time of the merge.
+  - A repository with no required checks configured, or no branch protection, produces no status-check finding here, because the merge-gate requirement (RSC.CMT.CTRL01.AR01) reports the missing requirement.
+  - Only a success counts as passed for a required check. A check run that concluded neutral or skipped is reported, although GitHub itself lets it satisfy the requirement.
+  - Status contexts are read up to 100 per PR, and up to 4 more pages of 100 (RSC_CONTEXT_PAGES_MAX). A PR with more is reported as incomplete, never as a pass.
+  - In a private repository a fine-grained token cannot read check runs, and GitHub then refuses the per-check connection, so only commit statuses (which is what Prow's ci/prow checks are) are judged. A required check that is not a commit status is then reported as incomplete evidence, not as passing and not as failing.
+  - Checks that finish after the merge cannot have blocked it. A required check still pending on a merged PR is reported, which is also how a check that is never going to report shows up.
 
 RSC.IAM.CTRL01.AR01:
   - The credential report is a snapshot of when it was generated. A key created and deleted between two runs is never seen.

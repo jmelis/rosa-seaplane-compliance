@@ -87,17 +87,35 @@ rules:
       Do not merge your own pull request by hand. Let the merge bot merge it once it has an
       independent approval, and restrict manual merges so the gate cannot be skipped.
     example: "org/repo: PR #7 merged to main by its own author (alice), bypassing the merge gate [rule: merge-review.self-merge]"
-  merge-review.failing-checks:
+  merge-review.required-check-not-passing:
     ar: RSC.CMT.CTRL01.AR02
     kind: violation
-    title: Merged with non-passing status checks
+    title: Merged with a required status check not passing
     subject: '(?P<subject>PR #\d+)'
     fix: >
-      Merge only when the required checks pass, and make them required so GitHub enforces it.
-      The state is the last commit's rollup, which can include contexts that are not
-      required or that finish after the merge: read the limits for this requirement before
-      treating a single case as a real bypass.
-    example: "org/repo: PR #7 merged to main with non-passing status checks (status_check_state=PENDING) [rule: merge-review.failing-checks]"
+      A check the branch protection requires was not successful on the PR's last commit:
+      failure, still pending, missing (it never reported), or neutral/skipped. Only a
+      success counts: GitHub itself lets neutral and skipped satisfy a required check, but
+      then the check asserted nothing. Find out why the check failed or did not run, and
+      stop merges that skip it by enforcing the protection for administrators and
+      restricting who may merge. The required list is today's configuration, which may
+      differ from the one in force at the time of the merge: a 'missing' result on older PRs
+      may only mean the check did not exist or was not yet required when they merged, so
+      compare the merge date with when the requirement was added. 'Missing' on a recent PR,
+      or on every required check at once, means it was merged before CI reported.
+    example: "org/repo: PR #7 merged to main with required check ci/build not passing (failure) [rule: merge-review.required-check-not-passing]"
+  merge-review.checks-incomplete:
+    ar: RSC.CMT.CTRL01.AR02
+    kind: incomplete-evidence
+    title: The status checks on a merged PR could not all be read
+    subject: '(?P<subject>PR #\d+)'
+    fix: >
+      Either the PR's last commit has more status contexts than the collector reads (raise
+      RSC_CONTEXT_PAGES_MAX and re-run), or the repository's check runs cannot be read with
+      this token, so a required check that is not a commit status cannot be seen (a private
+      repository and a fine-grained token: use a token or app that can read check runs).
+      Either way the PR cannot be judged, which is never read as a pass.
+    example: "org/repo: PR #7 merged to main: the status checks on its last commit could not all be read (more contexts than the collector reads, or check runs are not readable for this repository with the current token), so the required checks cannot be judged [rule: merge-review.checks-incomplete]"
   merge-review.no-merges-found:
     ar: RSC.CMT.CTRL01.AR02
     kind: incomplete-evidence

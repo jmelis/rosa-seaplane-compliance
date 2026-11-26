@@ -17,6 +17,8 @@ compliant_pr := {
 	"approved_by": ["bob"],
 	"approval_sources": ["github-review"],
 	"history_truncated": false,
+	"required_checks": [{"context": "ci/build", "result": "success"}],
+	"checks_complete": true,
 	"status_check_state": "SUCCESS",
 }
 
@@ -79,15 +81,63 @@ test_self_merge_is_denied if {
 	contains(msg, "by its own author")
 }
 
-test_failing_checks_is_denied if {
-	violations := deny with input as {
-		"assessment_requirement": "RSC.CMT.CTRL01.AR02",
-		"repository": "openshift-online/example",
-		"base_ref": "main",
-		"pull_requests": [object.union(compliant_pr, {"status_check_state": "FAILURE"})],
+test_required_check_not_passing_is_denied_naming_the_check_and_result if {
+	every result in {"failure", "pending", "neutral", "missing"} {
+		pr := object.union(compliant_pr, {"required_checks": [{"context": "ci/build", "result": result}]})
+		violations := deny with input as object.union(base, {"pull_requests": [pr]})
+		some msg in violations
+		contains(msg, "required check ci/build not passing")
+		contains(msg, result)
+		contains(msg, "merge-review.required-check-not-passing")
 	}
+}
+
+test_only_the_failing_required_check_is_named if {
+	pr := object.union(compliant_pr, {"required_checks": [
+		{"context": "ci/build", "result": "success"},
+		{"context": "ci/lint", "result": "failure"},
+	]})
+	violations := deny with input as object.union(base, {"pull_requests": [pr]})
+	count(violations) == 1
 	some msg in violations
-	contains(msg, "non-passing status checks")
+	contains(msg, "ci/lint")
+}
+
+test_the_overall_rollup_is_not_judged if {
+	# A pending or failing OVERALL state with every required check passing is not a denial.
+	pr := object.union(compliant_pr, {"status_check_state": "PENDING"})
+	count(deny) == 0 with input as object.union(base, {"pull_requests": [pr]})
+	pr2 := object.union(compliant_pr, {"status_check_state": "FAILURE"})
+	count(deny) == 0 with input as object.union(base, {"pull_requests": [pr2]})
+}
+
+test_no_required_checks_means_no_status_check_denial if {
+	pr := object.union(compliant_pr, {"required_checks": []})
+	count(deny) == 0 with input as object.union(base, {"pull_requests": [pr]})
+}
+
+test_unknown_is_neither_a_violation_nor_a_pass if {
+	# Check runs unreadable and the required context not among the statuses: we cannot tell.
+	pr := object.union(compliant_pr, {"required_checks": [{"context": "ci/build", "result": "unknown"}]})
+	violations := deny with input as object.union(base, {"pull_requests": [pr]})
+	count({m | some m in violations; contains(m, "merge-review.required-check-not-passing")}) == 0
+	some msg in violations
+	contains(msg, "merge-review.checks-incomplete")
+}
+
+test_incomplete_checks_are_reported_never_passed if {
+	pr := object.union(compliant_pr, {"checks_complete": false})
+	violations := deny with input as object.union(base, {"pull_requests": [pr]})
+	some msg in violations
+	contains(msg, "could not all be read")
+	contains(msg, "merge-review.checks-incomplete")
+}
+
+test_evidence_without_the_completeness_flag_is_not_a_pass if {
+	pr := object.remove(compliant_pr, ["checks_complete"])
+	violations := deny with input as object.union(base, {"pull_requests": [pr]})
+	some msg in violations
+	contains(msg, "could not all be read")
 }
 
 test_empty_window_is_denied if {
@@ -148,11 +198,11 @@ test_exemption_never_applies_to_a_non_allowlisted_bot if {
 	contains(msg, "without a non-author approval")
 }
 
-test_exemption_does_not_waive_failing_checks if {
-	pr := object.union(automated_pr, {"status_check_state": "FAILURE"})
+test_exemption_does_not_waive_a_failing_required_check if {
+	pr := object.union(automated_pr, {"required_checks": [{"context": "ci/build", "result": "failure"}]})
 	violations := deny with input as object.union(base, {"pull_requests": [pr]})
 	some msg in violations
-	contains(msg, "non-passing status checks")
+	contains(msg, "required check ci/build not passing")
 }
 
 test_exemption_does_not_waive_self_merge if {

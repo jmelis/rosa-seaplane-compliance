@@ -17,13 +17,32 @@ AR1, AR2 = "RSC.CMT.CTRL01.AR01", "RSC.CMT.CTRL01.AR02"
 FAKE_GH = r"""#!/usr/bin/env bash
 args="$*"
 case "$args" in
+  *"api graphql"*"-f oid="*)
+    # follow-up page of a commit's status contexts
+    oid="$(sed -n 's/.*-f oid=\([^ ]*\).*/\1/p' <<<"$args")"
+    after="$(sed -n 's/.*-f after=\([^ ]*\).*/\1/p' <<<"$args")"
+    f="${FAKE_GH_DIR}/ctx.${oid}.${after}.json"
+    if [[ -f "$f" ]]; then cat "$f"; exit 0; fi
+    echo "gh: no such contexts page (HTTP 500)" >&2; exit 1
+    ;;
   *"api graphql"*)
     name="$(sed -n 's/.*-f name=\([^ ]*\).*/\1/p' <<<"$args")"
+    # A private repository and a fine-grained token: the contexts connection is refused.
+    if [[ "$args" == *"contexts(first"* && "$name" == *priv* ]]; then
+      echo "gh: Resource not accessible by personal access token" >&2; exit 1
+    fi
     file="${FAKE_GH_DIR}/${name}.json"
     [[ "$args" == *"-f after="* ]] && file="${FAKE_GH_DIR}/${name}.2.json"
     if [[ -f "$file" ]]; then cat "$file"; exit 0; fi
     [[ "$name" == *ok* || "$name" == *unprot* ]] || { echo "gh: Resource not accessible by personal access token" >&2; exit 1; }
     cat "${FAKE_GH_DIR}/default.json"
+    ;;
+  *"/commits/"*"/status"*)
+    # REST combined status of a commit (the fallback for private repositories)
+    oid="$(sed -n 's#.*/commits/\([^/]*\)/status.*#\1#p' <<<"$args")"
+    f="${FAKE_GH_DIR}/status.${oid}.json"
+    if [[ -f "$f" ]]; then cat "$f"; exit 0; fi
+    echo "gh: Not Found (HTTP 404)" >&2; exit 1
     ;;
   *"repos/openshift/release/contents/"*)
     path="$(sed -n 's#.*contents/\([^ ]*\).*#\1#p' <<<"$args")"
@@ -34,6 +53,7 @@ case "$args" in
     ;;
   *"/protection"*)
     name="$(sed -n 's#.*repos/[^/]*/\([^/]*\)/branches.*#\1#p' <<<"$args")"
+    if [[ -f "${FAKE_GH_DIR}/protection-${name}.err" ]]; then cat "${FAKE_GH_DIR}/protection-${name}.err" >&2; exit 1; fi
     if [[ -f "${FAKE_GH_DIR}/protection-${name}.json" ]]; then cat "${FAKE_GH_DIR}/protection-${name}.json"; exit 0; fi
     case "$args" in
       *ok*) echo '{"enforce_admins":{"enabled":true}}' ;;
@@ -54,8 +74,19 @@ def user(login, bot=False):
     return {"login": login, "__typename": "Bot" if bot else "User"}
 
 
-def pr(number, author="alice", author_bot=False, merged_by="openshift-merge-bot", commits=(), labels=(), comments=(), reviews=(), opinionated=(), at=None, truncated=False):
-    """A GraphQL pull request node. comments/reviews are (login, body[, time])."""
+def sc(context, state):
+    """A StatusContext as GraphQL returns it."""
+    return {"__typename": "StatusContext", "context": context, "state": state}
+
+
+def cr(name, status="COMPLETED", conclusion="SUCCESS"):
+    """A CheckRun as GraphQL returns it."""
+    return {"__typename": "CheckRun", "name": name, "status": status, "conclusion": conclusion}
+
+
+def pr(number, author="alice", author_bot=False, merged_by="openshift-merge-bot", commits=(), labels=(), comments=(), reviews=(), opinionated=(), at=None, truncated=False,
+       contexts=(), more_contexts=False, cursor="cur1", oid="oid1", rollup="SUCCESS", no_rollup=False):
+    """A GraphQL pull request node. comments/reviews are (login, body[, time]); contexts are sc()/cr()."""
     t = at or now()
     return {
         "number": number, "mergedAt": t, "updatedAt": t,
@@ -68,7 +99,9 @@ def pr(number, author="alice", author_bot=False, merged_by="openshift-merge-bot"
         "reviews": {"pageInfo": {"hasNextPage": False},
                     "nodes": [{"author": user(r[0]), "body": r[1], "submittedAt": r[2] if len(r) > 2 else "2026-01-01T00:00:00Z"}
                               for r in reviews]},
-        "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]},
+        "commits": {"nodes": [{"commit": {"oid": oid, "statusCheckRollup": None if no_rollup else {
+            "state": rollup,
+            "contexts": {"pageInfo": {"hasNextPage": more_contexts, "endCursor": cursor}, "nodes": list(contexts)}}}}]},
         "allCommits": {"totalCount": len(commits), "nodes": [
             {"commit": {"author": {"user": {"login": c[0]} if c[0] else None}, "signature": {"isValid": c[1]}}} for c in commits]},
     }
@@ -371,6 +404,17 @@ class Retry(unittest.TestCase):
                   '[ \\$c -ge 2 ] && echo ok || { echo gh: HTTP 504 >&2; exit 1; }"; echo " rc=$?"')
         self.assertIn("ok rc=0", self.run_retry(script).stdout)
 
+    def test_a_truncated_response_is_retried_then_succeeds(self):
+        script = ('n=$(mktemp); rsc_retry bash -c "c=\\$(cat $n 2>/dev/null || echo 0); echo \\$((c+1)) > $n; '
+                  '[ \\$c -ge 1 ] && echo ok || { echo unexpected end of JSON input >&2; exit 1; }"; echo " rc=$?"')
+        self.assertIn("ok rc=0", self.run_retry(script).stdout)
+
+    def test_a_dropped_connection_is_retried(self):
+        for msg in ("unexpected EOF", "connection reset by peer", "i/o timeout", "TLS handshake timeout"):
+            script = ('n=$(mktemp); rsc_retry bash -c "echo x >> $n; echo ' + msg + ' >&2; exit 1" >/dev/null 2>&1; '
+                      'echo calls=$(grep -c x $n)')
+            self.assertIn("calls=3", self.run_retry(script).stdout, msg)
+
     def test_4xx_is_not_retried(self):
         script = ('n=$(mktemp); rsc_retry bash -c "echo x >> $n; echo gh: HTTP 404 >&2; exit 1"; echo calls=$(grep -c x $n)')
         self.assertIn("calls=1", self.run_retry(script).stdout)
@@ -384,6 +428,213 @@ BOT_TIDE = """tide:
   - labels: [approved, lgtm, jira/valid-reference]
     repos: [o/ok-x]
 """
+
+
+def ctx_page(nodes, has_next=False, cursor="cur2"):
+    return {"data": {"repository": {"object": {"statusCheckRollup": {"contexts": {
+        "pageInfo": {"hasNextPage": has_next, "endCursor": cursor}, "nodes": nodes}}}}}}
+
+
+class RequiredChecks(unittest.TestCase):
+    """AR02 judges only the checks the branch protection requires, on each PR's last commit."""
+
+    def collect(self, nodes, protection=None, protection_err=None, extra_env=None, pages=None):
+        c = Collectors("test_one_failing_repo_does_not_stop_the_others")
+        c.setUp()
+        self.addCleanup(c.tmp.cleanup)
+        c.graphql("ok-x", page(nodes))
+        if protection is not None:
+            (c.fake_dir / "protection-ok-x.json").write_text(json.dumps(protection))
+        if protection_err is not None:
+            (c.fake_dir / "protection-ok-x.err").write_text(protection_err)
+        for name, body in (pages or {}).items():
+            (c.fake_dir / f"ctx.{name}.json").write_text(json.dumps(body))
+        res = c.run_collector(AR2, ["o/ok-x"], extra_env=extra_env)
+        self.c, self.res = c, res
+        path = c.out / AR2 / "ok-x.json"
+        return json.loads(path.read_text()) if path.is_file() else None
+
+    def checks(self, doc, number=1):
+        p = next(p for p in doc["pull_requests"] if p["number"] == number)
+        return {x["context"]: x["result"] for x in p["required_checks"]}, p
+
+    REQ = {"required_status_checks": {"strict": False, "contexts": ["ci/build", "ci/lint"]}}
+
+    def test_required_contexts_come_from_both_protection_lists_sorted_and_unique(self):
+        prot = {"required_status_checks": {"contexts": ["ci/b", "ci/a"], "checks": [{"context": "ci/a"}, {"context": "ci/c"}]}}
+        doc = self.collect([pr(1)], protection=prot)
+        self.assertEqual(doc["required_contexts"], ["ci/a", "ci/b", "ci/c"])
+        self.assertIs(doc["branch_protected"], True)
+
+    def test_unprotected_branch_means_no_required_checks_not_an_error(self):
+        c = Collectors("test_one_failing_repo_does_not_stop_the_others")
+        c.setUp()
+        self.addCleanup(c.tmp.cleanup)
+        c.graphql("unprot", page([pr(1)]))
+        res = c.run_collector(AR2, ["o/unprot"])
+        self.assertEqual(res.returncode, 0, res.stderr)
+        doc = json.loads((c.out / AR2 / "unprot.json").read_text())
+        self.assertEqual((doc["branch_protected"], doc["required_contexts"], doc["pull_requests"][0]["required_checks"]),
+                         (False, [], []))
+
+    def test_protection_without_required_checks_is_an_empty_list(self):
+        doc = self.collect([pr(1)], protection={"enforce_admins": {"enabled": False}})
+        self.assertEqual((doc["branch_protected"], doc["required_contexts"]), (True, []))
+
+    def test_any_other_protection_failure_is_a_collection_error_never_no_checks(self):
+        doc = self.collect([pr(1)], protection_err="gh: Resource not accessible (HTTP 403)")
+        self.assertIsNone(doc)
+        self.assertNotEqual(self.res.returncode, 0)
+        self.assertEqual(json.loads((self.c.out / AR2 / "manifest.json").read_text())["targets"][0]["status"], "error")
+
+    def test_status_context_results(self):
+        for state, want in (("SUCCESS", "success"), ("FAILURE", "failure"), ("ERROR", "failure"),
+                            ("PENDING", "pending"), ("EXPECTED", "pending")):
+            doc = self.collect([pr(1, contexts=[sc("ci/build", state), sc("ci/lint", "SUCCESS")])], protection=self.REQ)
+            self.assertEqual(self.checks(doc)[0], {"ci/build": want, "ci/lint": "success"}, state)
+
+    def test_check_run_results(self):
+        cases = [(("COMPLETED", "SUCCESS"), "success"), (("COMPLETED", "FAILURE"), "failure"),
+                 (("COMPLETED", "TIMED_OUT"), "failure"), (("COMPLETED", "CANCELLED"), "failure"),
+                 (("COMPLETED", "STARTUP_FAILURE"), "failure"), (("COMPLETED", "ACTION_REQUIRED"), "failure"),
+                 (("COMPLETED", "STALE"), "failure"), (("COMPLETED", "NEUTRAL"), "neutral"),
+                 (("COMPLETED", "SKIPPED"), "neutral"), (("IN_PROGRESS", None), "pending"),
+                 (("QUEUED", None), "pending"), (("WAITING", None), "pending")]
+        for (status, conclusion), want in cases:
+            doc = self.collect([pr(1, contexts=[cr("ci/build", status, conclusion), cr("ci/lint")])], protection=self.REQ)
+            self.assertEqual(self.checks(doc)[0]["ci/build"], want, (status, conclusion))
+
+    def test_a_required_context_that_never_reported_is_missing(self):
+        doc = self.collect([pr(1, contexts=[cr("ci/build")])], protection=self.REQ)
+        self.assertEqual(self.checks(doc)[0], {"ci/build": "success", "ci/lint": "missing"})
+
+    def test_non_required_contexts_are_ignored_even_when_they_never_resolve(self):
+        # What a merged PR really looks like: tide stays pending, optional checks are queued/skipped.
+        nodes = [cr("ci/build"), cr("ci/lint"), sc("tide", "PENDING"), cr("optional-scan", "QUEUED", None),
+                 cr("review-bot", "COMPLETED", "SKIPPED")]
+        doc = self.collect([pr(1, contexts=nodes, rollup="PENDING")], protection=self.REQ)
+        got, p = self.checks(doc)
+        self.assertEqual(got, {"ci/build": "success", "ci/lint": "success"})
+        self.assertEqual(p["status_check_state"], "PENDING")  # recorded for debugging, not judged
+        self.assertIs(p["checks_complete"], True)
+
+    def test_duplicate_contexts_keep_the_worst_result(self):
+        doc = self.collect([pr(1, contexts=[cr("ci/build"), cr("ci/build", "COMPLETED", "FAILURE"), cr("ci/lint")])],
+                           protection=self.REQ)
+        self.assertEqual(self.checks(doc)[0]["ci/build"], "failure")
+
+    def test_a_pr_with_no_rollup_at_all_has_every_required_check_missing(self):
+        doc = self.collect([pr(1, no_rollup=True)], protection=self.REQ)
+        got, p = self.checks(doc)
+        self.assertEqual(got, {"ci/build": "missing", "ci/lint": "missing"})
+        self.assertEqual(p["status_check_state"], "NONE")
+        self.assertIs(p["checks_complete"], True)
+
+    def test_contexts_beyond_the_first_page_are_followed(self):
+        node = pr(1, contexts=[cr("ci/build")], more_contexts=True, cursor="c1", oid="oidA")
+        pages = {"oidA.c1": ctx_page([cr("ci/lint")])}
+        doc = self.collect([node], protection=self.REQ, pages=pages)
+        got, p = self.checks(doc)
+        self.assertEqual(got, {"ci/build": "success", "ci/lint": "success"})
+        self.assertIs(p["checks_complete"], True)
+
+    def test_paging_stops_at_the_bound_and_the_pr_is_incomplete_not_passed(self):
+        node = pr(1, contexts=[cr("ci/build")], more_contexts=True, cursor="c1", oid="oidA")
+        pages = {"oidA.c1": ctx_page([sc("x1", "SUCCESS")], True, "c2"), "oidA.c2": ctx_page([cr("ci/lint")], True, "c3")}
+        doc = self.collect([node], protection=self.REQ, pages=pages, extra_env={"RSC_CONTEXT_PAGES_MAX": "1"})
+        got, p = self.checks(doc)
+        self.assertIs(p["checks_complete"], False)
+        self.assertEqual(got["ci/lint"], "missing")  # on a page we did not read: the flag says so
+
+    def test_a_failing_follow_up_page_is_a_collection_error(self):
+        node = pr(1, contexts=[cr("ci/build")], more_contexts=True, cursor="c1", oid="oidMissing")
+        doc = self.collect([node], protection=self.REQ)
+        self.assertIsNone(doc)
+        self.assertEqual(json.loads((self.c.out / AR2 / "manifest.json").read_text())["targets"][0]["status"], "error")
+
+    def test_only_prs_with_more_contexts_trigger_follow_up_pages(self):
+        a = pr(1, contexts=[cr("ci/build"), cr("ci/lint")])
+        b = pr(2, contexts=[cr("ci/build")], more_contexts=True, cursor="c1", oid="oidB")
+        doc = self.collect([a, b], protection=self.REQ, pages={"oidB.c1": ctx_page([cr("ci/lint")])})
+        self.assertEqual(self.checks(doc, 1)[0], {"ci/build": "success", "ci/lint": "success"})
+        self.assertEqual(self.checks(doc, 2)[0], {"ci/build": "success", "ci/lint": "success"})
+
+
+def status_body(statuses, total=None):
+    return {"total_count": len(statuses) if total is None else total,
+            "statuses": [{"context": c, "state": st} for c, st in statuses]}
+
+
+class PrivateRepositoryChecks(unittest.TestCase):
+    """A fine-grained token cannot read check runs in a private repository: fall back to commit statuses."""
+
+    REQ = {"required_status_checks": {"contexts": ["ci/prow/a", "ci/prow/b"]}}
+
+    def collect(self, nodes, statuses=None, protection=REQ, extra=None):
+        c = Collectors("test_one_failing_repo_does_not_stop_the_others")
+        c.setUp()
+        self.addCleanup(c.tmp.cleanup)
+        c.graphql("ok-priv", page(nodes))
+        (c.fake_dir / "protection-ok-priv.json").write_text(json.dumps(protection))
+        for oid, body in (statuses or {}).items():
+            (c.fake_dir / f"status.{oid}.json").write_text(json.dumps(body))
+        res = c.run_collector(AR2, ["o/ok-priv"], extra_env=extra)
+        self.c, self.res = c, res
+        path = c.out / AR2 / "ok-priv.json"
+        return json.loads(path.read_text()) if path.is_file() else None
+
+    def test_required_statuses_are_judged_from_the_rest_fallback(self):
+        doc = self.collect([pr(1, oid="o1", rollup="PENDING")],
+                           {"o1": status_body([("ci/prow/a", "success"), ("ci/prow/b", "failure"), ("tide", "pending")])})
+        p = doc["pull_requests"][0]
+        self.assertIs(doc["check_runs_readable"], False)
+        self.assertEqual({x["context"]: x["result"] for x in p["required_checks"]}, {"ci/prow/a": "success", "ci/prow/b": "failure"})
+        self.assertIs(p["checks_complete"], True)
+        self.assertEqual(p["status_check_state"], "PENDING")  # the overall state still comes from GraphQL
+
+    def test_a_required_context_not_among_the_statuses_is_unknown_and_the_pr_incomplete(self):
+        doc = self.collect([pr(1, oid="o1")], {"o1": status_body([("ci/prow/a", "success")])})
+        p = doc["pull_requests"][0]
+        self.assertEqual({x["context"]: x["result"] for x in p["required_checks"]}, {"ci/prow/a": "success", "ci/prow/b": "unknown"})
+        self.assertIs(p["checks_complete"], False)
+
+    def test_every_status_state_maps(self):
+        for state, want in (("success", "success"), ("failure", "failure"), ("error", "failure"), ("pending", "pending")):
+            doc = self.collect([pr(1, oid="o1")], {"o1": status_body([("ci/prow/a", state), ("ci/prow/b", "success")])})
+            self.assertEqual(doc["pull_requests"][0]["required_checks"][0]["result"], want, state)
+
+    def test_more_statuses_than_one_page_makes_the_pr_incomplete(self):
+        doc = self.collect([pr(1, oid="o1")], {"o1": status_body([("ci/prow/a", "success"), ("ci/prow/b", "success")], total=150)})
+        self.assertIs(doc["pull_requests"][0]["checks_complete"], False)
+
+    def test_a_failing_status_call_is_a_collection_error(self):
+        doc = self.collect([pr(1, oid="o-no-status-file")])
+        self.assertIsNone(doc)
+        self.assertEqual(json.loads((self.c.out / AR2 / "manifest.json").read_text())["targets"][0]["status"], "error")
+
+    def test_only_in_window_prs_are_looked_up(self):
+        old = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        doc = self.collect([pr(1, oid="o1"), pr(2, oid="o-old", at=old)],
+                           {"o1": status_body([("ci/prow/a", "success"), ("ci/prow/b", "success")])})
+        self.assertEqual([p["number"] for p in doc["pull_requests"]], [1])
+
+    def test_public_repositories_keep_reading_check_runs(self):
+        c = Collectors("test_one_failing_repo_does_not_stop_the_others")
+        c.setUp()
+        self.addCleanup(c.tmp.cleanup)
+        c.graphql("ok-pub", page([pr(1, contexts=[cr("ci/prow/a"), cr("ci/prow/b")])]))
+        (c.fake_dir / "protection-ok-pub.json").write_text(json.dumps(self.REQ))
+        c.run_collector(AR2, ["o/ok-pub"])
+        doc = json.loads((c.out / AR2 / "ok-pub.json").read_text())
+        self.assertIs(doc["check_runs_readable"], True)
+
+    def test_an_unrelated_graphql_failure_is_still_an_error(self):
+        # "denied" repos fail with a different message and must not trigger the fallback.
+        c = Collectors("test_one_failing_repo_does_not_stop_the_others")
+        c.setUp()
+        self.addCleanup(c.tmp.cleanup)
+        res = c.run_collector(AR2, ["o/denied-x"])
+        self.assertNotEqual(res.returncode, 0)
 
 
 class AutomationExemption(unittest.TestCase):

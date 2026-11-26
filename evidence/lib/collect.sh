@@ -37,7 +37,9 @@ rsc_default_branch() {
 }
 
 # Run a command, retrying a few times: GitHub's API returns transient 5xx
-# (e.g. HTTP 502/504) on heavy GraphQL queries.
+# (e.g. HTTP 502/504) on heavy GraphQL queries, and sometimes a truncated
+# response ("unexpected end of JSON input") or a dropped connection. Anything else,
+# 4xx included, fails at once.
 rsc_retry() {
   local attempt out rc=0 errf
   errf="$(mktemp)"
@@ -45,7 +47,7 @@ rsc_retry() {
     # Capture the status on the same line: `rc=$?` after an `if` reads 0.
     out="$("$@" 2>"${errf}")" && { rm -f "${errf}"; printf '%s' "${out}"; return 0; }
     rc=$?
-    grep -q -E 'HTTP 5[0-9][0-9]' "${errf}" || break
+    grep -q -E 'HTTP 5[0-9][0-9]|unexpected end of JSON input|unexpected EOF|connection reset|i/o timeout|TLS handshake timeout' "${errf}" || break
     sleep $((attempt * 2))
   done
   cat "${errf}" >&2
@@ -90,6 +92,30 @@ rsc_tide_gate() {
 
 # The targets to collect from. Repositories by default; an AWS collector overrides it.
 rsc_list_targets() { rsc_repos; }
+
+# The status check contexts a repository's branch protection REQUIRES on a branch,
+# as JSON: {"protected": bool, "contexts": [sorted unique names]}. Both the classic
+# `contexts` list and the newer `checks[].context` entries are read.
+# "Branch not protected" (404) is not an error: it means no required checks (AR01
+# is the check that reports the missing protection). Any other failure (auth, rate
+# limit, 5xx, unknown repository) is an error, never "no required checks".
+rsc_required_checks() {
+  local repo="$1" branch="$2" raw errf
+  errf="$(mktemp)"
+  if raw="$(rsc_retry gh api "repos/${repo}/branches/${branch}/protection" 2>"${errf}")"; then
+    rm -f "${errf}"
+    jq -c '{protected: true,
+            contexts: ([(.required_status_checks.contexts // [])[],
+                        ((.required_status_checks.checks // [])[] | .context)] | unique)}' <<<"${raw}"
+  elif grep -q "Branch not protected" "${errf}"; then
+    rm -f "${errf}"
+    printf '%s' '{"protected":false,"contexts":[]}'
+  else
+    cat "${errf}" >&2
+    rm -f "${errf}"
+    return 1
+  fi
+}
 
 rsc_collect_all() {
   local out_dir="${EVIDENCE_DIR}/${AR_ID}" repo name err targets="[]" ok=0 failed=0 collect_fn=collect_repo

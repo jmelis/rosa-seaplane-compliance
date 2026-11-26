@@ -4,6 +4,12 @@
   "repository": "openshift-online/rosa-seaplane",
   "base_ref": "main",
   "window_days": 30,
+  "branch_protected": true,
+  "check_runs_readable": true,
+  "required_contexts": [
+    "ci/build",
+    "ci/lint"
+  ],
   "pull_requests": [
     {
       "number": 301,
@@ -25,7 +31,18 @@
         "prow"
       ],
       "history_truncated": false,
-      "status_check_state": "SUCCESS"
+      "status_check_state": "SUCCESS",
+      "required_checks": [
+        {
+          "context": "ci/build",
+          "result": "success"
+        },
+        {
+          "context": "ci/lint",
+          "result": "success"
+        }
+      ],
+      "checks_complete": false
     },
     {
       "number": 302,
@@ -43,7 +60,18 @@
       "approved_by": [],
       "approval_sources": [],
       "history_truncated": false,
-      "status_check_state": "SUCCESS"
+      "status_check_state": "SUCCESS",
+      "required_checks": [
+        {
+          "context": "ci/build",
+          "result": "missing"
+        },
+        {
+          "context": "ci/lint",
+          "result": "neutral"
+        }
+      ],
+      "checks_complete": true
     },
     {
       "number": 303,
@@ -65,7 +93,18 @@
         "github-review"
       ],
       "history_truncated": false,
-      "status_check_state": "SUCCESS"
+      "status_check_state": "SUCCESS",
+      "required_checks": [
+        {
+          "context": "ci/build",
+          "result": "success"
+        },
+        {
+          "context": "ci/lint",
+          "result": "pending"
+        }
+      ],
+      "checks_complete": true
     },
     {
       "number": 304,
@@ -87,7 +126,18 @@
         "prow"
       ],
       "history_truncated": false,
-      "status_check_state": "FAILURE"
+      "status_check_state": "FAILURE",
+      "required_checks": [
+        {
+          "context": "ci/build",
+          "result": "failure"
+        },
+        {
+          "context": "ci/lint",
+          "result": "success"
+        }
+      ],
+      "checks_complete": true
     },
     {
       "number": 305,
@@ -105,7 +155,18 @@
       "approved_by": [],
       "approval_sources": [],
       "history_truncated": false,
-      "status_check_state": "SUCCESS"
+      "status_check_state": "SUCCESS",
+      "required_checks": [
+        {
+          "context": "ci/build",
+          "result": "success"
+        },
+        {
+          "context": "ci/lint",
+          "result": "success"
+        }
+      ],
+      "checks_complete": true
     }
   ]
 }

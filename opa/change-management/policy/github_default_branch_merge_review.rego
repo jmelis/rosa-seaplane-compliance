@@ -30,7 +30,7 @@ approvers(pr) := {a | some a in pr.approved_by; a != pr.author}
 # only when every fact holds (see config/automation.yaml): the repo's merge bot
 # has a dedicated approval-requiring rule for that author, the approval labels are
 # present, the merge bot merged it, and every commit is the author's own and
-# signed. Failing status checks are still denied by their own rule below.
+# signed. Failing required checks are still denied by their own rule below.
 automation_facts := {"author_allowlisted", "gate_defined", "gate_labels_present", "merged_by_merge_automation", "all_commits_by_author"}
 
 automation_exempt(pr) if {
@@ -70,13 +70,45 @@ deny contains msg if {
 	))
 }
 
+# Only the checks the branch protection REQUIRES are judged, on the PR's last
+# commit. The collector normalizes each required context to success, failure,
+# pending, neutral (a check run that concluded neutral or skipped), missing (it
+# never reported) or unknown (the repository's check runs are not readable and the
+# context is not among the readable statuses, so we cannot tell). Only `success`
+# passes: GitHub itself lets neutral and skipped satisfy a required check, but then
+# the check asserted nothing, so it is reported. `unknown` is never a violation and
+# never a pass: it makes the PR incomplete evidence, below.
+# A repository with no required checks configured yields no denial here: that is
+# reported by the merge-gate requirement (RSC.CMT.CTRL01.AR01).
 deny contains msg if {
 	applies
 	some pr in input.pull_requests
-	pr.status_check_state != "SUCCESS"
-	msg := with_rule("merge-review.failing-checks", sprintf(
-		"%s: PR #%d merged to %s with non-passing status checks (status_check_state=%s)",
-		[input.repository, pr.number, input.base_ref, pr.status_check_state],
+	some check in pr.required_checks
+	check.result != "success"
+	check.result != "unknown"
+	msg := with_rule("merge-review.required-check-not-passing", sprintf(
+		"%s: PR #%d merged to %s with required check %s not passing (%s)",
+		[input.repository, pr.number, input.base_ref, check.context, check.result],
+	))
+}
+
+# If the contexts of a PR's last commit could not all be read, a required check may
+# be missing from the evidence, so the PR cannot be judged. An absent flag (evidence
+# from an older collector) is treated the same way, never as a pass.
+checks_unjudged(pr) if not pr.checks_complete == true
+
+checks_unjudged(pr) if {
+	some check in pr.required_checks
+	check.result == "unknown"
+}
+
+deny contains msg if {
+	applies
+	some pr in input.pull_requests
+	checks_unjudged(pr)
+	msg := with_rule("merge-review.checks-incomplete", sprintf(
+		"%s: PR #%d merged to %s: the status checks on its last commit could not all be read (more contexts than the collector reads, or check runs are not readable for this repository with the current token), so the required checks cannot be judged",
+		[input.repository, pr.number, input.base_ref],
 	))
 }
 
