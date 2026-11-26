@@ -19,3 +19,23 @@ accounts:
     snapshot-path: "{region}.rc_account_id"
   management-mc01:
     snapshot-path: "{region}.mc_account_ids.mc01"
+
+# How changes reach this environment: the deployment pipelines that apply the default
+# branch of `repository` (the platform repo). Names only, no IDs. Each pipeline is named
+# "<cluster id>-pipeline" by the platform's provisioner (its docs and
+# scripts/provision-cluster-resources.sh), and runs in the account named here (the
+# control account, "central"); the cluster ids come from the environment's
+# deploy/integration/<region>/pipeline-provisioner-inputs/ files.
+#   branch: null means the repository's default branch.
+#   allowed-lag-minutes: how long a merged change may wait before it counts as not
+#     deployed. Merges were observed deploying in about 5 minutes; 120 leaves room for a
+#     failed run to be re-run by a person without the check flagging it at once.
+deployment:
+  repository: openshift-online/rosa-seaplane
+  branch: null
+  allowed-lag-minutes: 120
+  pipelines:
+    - name: regional-pipeline
+      account: central
+    - name: mc01-pipeline
+      account: central

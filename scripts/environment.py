@@ -8,7 +8,11 @@ is set up by scripts/aws_access.py.
     environment.py [name]               print the environment (default: $RSC_ENV or
                                         integration) and whether its accounts can be resolved
     environment.py --accounts [name]    print only the logical account names, one per line
+    environment.py --regions [name]     print the regions, comma separated
+    environment.py --pipelines [name]   print the deployment pipeline names, one per line
+    environment.py --deployment [name]  print the deployment block as JSON
 """
+import json
 import os
 import re
 import sys
@@ -50,7 +54,52 @@ def load(name: str = None, environ: dict = None, env_dir: Path = ENV_DIR) -> dic
             raise EnvironmentError_(f"{path.name}: account {account!r} needs a name and a snapshot-path")
         accounts.append({"name": account, "snapshot_path": spec["snapshot-path"]})
     return {"name": name, "regions": list(doc.get("regions") or []), "snapshot": doc["snapshot"],
-            "saml_role": doc["saml-role"], "accounts": accounts}
+            "saml_role": doc["saml-role"], "accounts": accounts,
+            "deployment": _deployment(doc.get("deployment"), [a["name"] for a in accounts], path.name)}
+
+
+def _deployment(block, account_names: list, filename: str):
+    """The validated deployment block, or None when the environment has none."""
+    if block is None:
+        return None
+    if not isinstance(block, dict):
+        raise EnvironmentError_(f"{filename}: deployment must be a mapping")
+    repository, branch = block.get("repository"), block.get("branch")
+    if not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+        raise EnvironmentError_(f"{filename}: deployment.repository must be owner/name")
+    if branch is not None and not (isinstance(branch, str) and re.fullmatch(r"[A-Za-z0-9_./-]+", branch)):
+        raise EnvironmentError_(f"{filename}: deployment.branch must be a branch name or null")
+    lag = block.get("allowed-lag-minutes")
+    if isinstance(lag, bool) or not isinstance(lag, int) or not 1 <= lag <= 10080:
+        raise EnvironmentError_(f"{filename}: deployment.allowed-lag-minutes must be a whole number of minutes (1 to 10080)")
+    pipelines = []
+    for p in block.get("pipelines") or []:
+        pname, account = (p or {}).get("name"), (p or {}).get("account")
+        if not isinstance(pname, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", pname):
+            raise EnvironmentError_(f"{filename}: every deployment pipeline needs a name")
+        if account not in account_names:
+            raise EnvironmentError_(f"{filename}: pipeline {pname!r} names account {account!r}, which this environment does not list")
+        pipelines.append({"name": pname, "account": account})
+    if not pipelines:
+        raise EnvironmentError_(f"{filename}: deployment needs at least one pipeline")
+    if len({p["name"] for p in pipelines}) != len(pipelines):
+        raise EnvironmentError_(f"{filename}: a deployment pipeline is listed twice")
+    return {"repository": repository, "branch": branch, "allowed_lag_minutes": lag, "pipelines": pipelines}
+
+
+def deployment(name: str = None, environ: dict = None, env_dir: Path = ENV_DIR) -> dict:
+    """The deployment block of an environment; an environment without one is an error,
+    never a guess."""
+    env = load(name, environ, env_dir)
+    if env["deployment"] is None:
+        raise EnvironmentError_(f"environment {env['name']!r} has no deployment block in config/environments/")
+    return env["deployment"]
+
+
+def pipeline_names(name: str = None, environ: dict = None, env_dir: Path = ENV_DIR) -> list:
+    """Logical names of the deployment pipelines of an environment (empty if it has none)."""
+    dep = load(name, environ, env_dir)["deployment"]
+    return [p["name"] for p in dep["pipelines"]] if dep else []
 
 
 def account_names(name: str = None, environ: dict = None, env_dir: Path = ENV_DIR) -> list:
@@ -59,19 +108,22 @@ def account_names(name: str = None, environ: dict = None, env_dir: Path = ENV_DI
 
 
 def main() -> None:
-    args = [a for a in sys.argv[1:] if a not in ("--accounts", "--regions")]
-    if "--regions" in sys.argv[1:]:
-        try:
-            print(",".join(load(args[0] if args else None)["regions"]))
-        except EnvironmentError_ as e:
-            sys.exit(f"ERROR: {e}")
-        return
-    if "--accounts" in sys.argv[1:]:
-        try:
-            print("\n".join(a["name"] for a in load(args[0] if args else None)["accounts"]))
-        except EnvironmentError_ as e:
-            sys.exit(f"ERROR: {e}")
-        return
+    flags = {a for a in sys.argv[1:] if a.startswith("--")}
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    env_name = args[0] if args else None
+    simple = {
+        "--regions": lambda: ",".join(load(env_name)["regions"]),
+        "--accounts": lambda: "\n".join(a["name"] for a in load(env_name)["accounts"]),
+        "--pipelines": lambda: "\n".join(pipeline_names(env_name)),
+        "--deployment": lambda: json.dumps(deployment(env_name)),
+    }
+    for flag, fn in simple.items():
+        if flag in flags:
+            try:
+                print(fn())
+            except EnvironmentError_ as e:
+                sys.exit(f"ERROR: {e}")
+            return
     import aws_access
     try:
         env = load(args[0] if args else None)
@@ -82,6 +134,10 @@ def main() -> None:
     print(f"  account snapshot: {status['snapshot']}")
     for a in env["accounts"]:
         print(f"  {a['name']:<20} {'resolvable' if status['resolved'].get(a['name']) else 'NOT FOUND in snapshot'}")
+    if env["deployment"]:
+        print(f"  deployment pipelines: {', '.join(p['name'] for p in env['deployment']['pipelines'])}")
+    else:
+        print("  deployment pipelines: none configured")
 
 
 if __name__ == "__main__":

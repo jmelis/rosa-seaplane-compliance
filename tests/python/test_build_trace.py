@@ -184,6 +184,18 @@ class ScopeAndResults(Fake):
                          [("acct-one", "reached"), ("acct-two", "error"), ("acct-three", "not reached")])
         self.assertEqual(sc["targets"][1]["error"], "gh: denied")
 
+    def test_deployment_pipelines_are_expected_from_the_environment_config(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            root, ev = Path(t), Path(t) / "ev"
+            (ev / "X.AR1").mkdir(parents=True)
+            (ev / "X.AR1" / "manifest.json").write_text(json.dumps({"targets": [
+                {"name": "regional-pipeline", "status": "collected"}]}))
+            sc = build_trace.load_scope(root, {"X.AR1": {"applicability": ["deployment_pipelines"]}}, ev, "integration")["X.AR1"]
+        self.assertEqual(sc["expected"], ["regional-pipeline", "mc01-pipeline"])
+        self.assertEqual([(x["name"], x["status"]) for x in sc["targets"]],
+                         [("regional-pipeline", "reached"), ("mc01-pipeline", "not reached")])
+
     def test_ar_with_no_manifest_is_not_run(self):
         sc = self.build()["scope"][fk.AR_B1]
         self.assertFalse(sc["run"])

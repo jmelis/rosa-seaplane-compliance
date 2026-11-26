@@ -55,5 +55,89 @@ class Environments(unittest.TestCase):
             self.assertNotIn("profile:", text)
 
 
+BASE = """name: demo
+regions: [us-east-1]
+snapshot: demo
+saml-role: demo-admin
+accounts:
+  central:
+    snapshot-path: control_account_id
+  regional:
+    snapshot-path: "{region}.rc_account_id"
+"""
+
+DEPLOYMENT = """deployment:
+  repository: example-org/platform
+  branch: null
+  allowed-lag-minutes: 90
+  pipelines:
+    - name: regional-pipeline
+      account: central
+    - name: mc01-pipeline
+      account: central
+"""
+
+
+class DeploymentBlock(unittest.TestCase):
+    def load(self, text):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            (Path(t) / "demo.yaml").write_text(text)
+            return environment.load("demo", {}, Path(t))
+
+    def test_shipped_environments_name_their_pipelines_and_the_lag(self):
+        for name in ("integration", "stage"):
+            dep = environment.deployment(name, {})
+            self.assertEqual(dep["repository"], "openshift-online/rosa-seaplane")
+            self.assertEqual([p["name"] for p in dep["pipelines"]], ["regional-pipeline", "mc01-pipeline"])
+            self.assertEqual({p["account"] for p in dep["pipelines"]}, {"central"})
+            self.assertEqual(dep["allowed_lag_minutes"], 120)
+            self.assertIsNone(dep["branch"])
+
+    def test_pipeline_names(self):
+        self.assertEqual(environment.pipeline_names("integration", {}), ["regional-pipeline", "mc01-pipeline"])
+
+    def test_a_valid_block_is_parsed(self):
+        dep = self.load(BASE + DEPLOYMENT)["deployment"]
+        self.assertEqual((dep["repository"], dep["allowed_lag_minutes"], dep["branch"]), ("example-org/platform", 90, None))
+        self.assertEqual([p["name"] for p in dep["pipelines"]], ["regional-pipeline", "mc01-pipeline"])
+
+    def test_an_environment_without_a_block_loads_but_never_guesses(self):
+        env = self.load(BASE)
+        self.assertIsNone(env["deployment"])
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            (Path(t) / "demo.yaml").write_text(BASE)
+            self.assertEqual(environment.pipeline_names("demo", {}, Path(t)), [])
+            with self.assertRaises(environment.EnvironmentError_):
+                environment.deployment("demo", {}, Path(t))
+
+    def test_invalid_blocks_are_rejected(self):
+        bad = {
+            "repository": DEPLOYMENT.replace("example-org/platform", "no-slash"),
+            "branch": DEPLOYMENT.replace("branch: null", "branch: 'a b;c'"),
+            "lag zero": DEPLOYMENT.replace("90", "0"),
+            "lag huge": DEPLOYMENT.replace("90", "20000"),
+            "lag a string": DEPLOYMENT.replace("90", "soon"),
+            "lag a bool": DEPLOYMENT.replace("90", "true"),
+            "unknown account": DEPLOYMENT.replace("account: central", "account: nowhere", 1),
+            "no pipelines": "deployment:\n  repository: example-org/platform\n  branch: null\n  allowed-lag-minutes: 90\n  pipelines: []\n",
+            "duplicate": DEPLOYMENT.replace("mc01-pipeline", "regional-pipeline"),
+            "bad name": DEPLOYMENT.replace("mc01-pipeline", "bad name!"),
+            "not a mapping": "deployment: [1, 2]\n",
+        }
+        for label, block in bad.items():
+            with self.assertRaises(environment.EnvironmentError_, msg=label):
+                self.load(BASE + block)
+
+    def test_the_command_line_prints_pipelines_and_the_block(self):
+        import json
+        import subprocess
+        run = lambda *a: subprocess.run([sys.executable, str(ROOT / "scripts/environment.py"), *a], capture_output=True, text=True)
+        self.assertEqual(run("--pipelines", "integration").stdout.split(), ["regional-pipeline", "mc01-pipeline"])
+        self.assertEqual(json.loads(run("--deployment", "integration").stdout)["allowed_lag_minutes"], 120)
+        self.assertNotEqual(run("--deployment", "nonexistent").returncode, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

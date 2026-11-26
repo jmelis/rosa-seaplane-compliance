@@ -146,6 +146,22 @@ class AwsTargets(unittest.TestCase):
         self.assertEqual(sorted(scope["missing"]), ["management-mc01", "regional"])
 
 
+class DeploymentPipelineTargets(unittest.TestCase):
+    PIPELINES = ["regional-pipeline", "mc01-pipeline"]
+
+    def test_expected_targets_for_pipelines_are_the_logical_names(self):
+        self.assertEqual(coverage.expected_targets(["deployment-pipeline"], None, ["org/a"], ["central"], self.PIPELINES), self.PIPELINES)
+
+    def test_a_pipeline_never_listed_by_the_collector_is_missing_scope(self):
+        data = {"manifests": {AR1: manifest(**{"regional-pipeline": "collected"})}, "repos": [], "accounts": [],
+                "pipelines": self.PIPELINES}
+        scope = coverage.method_scope(AR1, ["deployment-pipeline"], data)
+        self.assertEqual((scope["reached"], scope["total"], scope["missing"]), (1, 2, ["mc01-pipeline"]))
+
+    def test_the_catalogs_deployment_applicability_maps_to_the_target_type(self):
+        self.assertEqual(coverage.ar_target_types()["RSC.CMT.CTRL03.AR01"], ["deployment-pipeline"])
+
+
 class ScopeCell(unittest.TestCase):
     def row(self, *scopes):
         return {"methods": [{"implemented": True, "scope": {"run": True, "reached": r, "total": t}} for r, t in scopes]}
