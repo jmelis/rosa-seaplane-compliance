@@ -54,7 +54,10 @@ class PolicyArs(unittest.TestCase):
         cwd = os.getcwd()
         os.chdir(ROOT)
         try:
-            self.assertEqual(entrypoint.policy_ars(), [AR1, "RSC.CMT.CTRL02.AR01", "RSC.CMT.CTRL03.AR01", AR2, "RSC.IAM.CTRL01.AR01", "RSC.IAM.CTRL01.AR02"])
+            # The order follows the policy files, which is not what matters: every AR the policies assess.
+            self.assertEqual(sorted(entrypoint.policy_ars()), sorted([
+                AR1, AR2, "RSC.CMT.CTRL02.AR01", "RSC.CMT.CTRL03.AR01", "RSC.CMT.CTRL03.AR02",
+                "RSC.IAM.CTRL01.AR01", "RSC.IAM.CTRL01.AR02"]))
         finally:
             os.chdir(cwd)
 

@@ -86,6 +86,21 @@ adherence:
             type: Software
             uri: https://github.com/complytime/complytime-providers/tree/main/cmd/opa-provider
 
+    - id: RSC.CMT.POL01.AP05
+      requirement-id: RSC.CMT.CTRL03.AR02
+      frequency: daily
+      evaluation-methods:
+        - id: RSC.CMT.POL01.AP05.EM01
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: opa/conftest evaluates, for each cluster, whether the deployed applications were synchronized and healthy (collected from the deployment tool's metrics) with deployment_workloads_healthy.rego.
+          executor:
+            id: opa
+            name: opa-provider
+            type: Software
+            uri: https://github.com/complytime/complytime-providers/tree/main/cmd/opa-provider
+
     - id: RSC.CMT.POL01.AP02
       requirement-id: RSC.CMT.CTRL01.AR02
       frequency: daily

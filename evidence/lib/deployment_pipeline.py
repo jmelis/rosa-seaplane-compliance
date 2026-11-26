@@ -56,7 +56,7 @@ SOURCE = "codepipeline-executions+github"
 TARGET_TYPE = "deployment-pipeline"
 LIMITATIONS = [
     "only the deployment pipelines of the selected environment are examined; a change deployed some other way is not seen",
-    "it shows that the pipeline applied each merged change and finished successfully, not that the deployed system is healthy afterwards (the health of the deployed workloads is not checked)",
+    "it shows that the pipeline applied each merged change and finished successfully, not that the deployed system is healthy afterwards (the health of the deployed applications is checked separately, by RSC.CMT.CTRL03.AR02)",
     "a run that failed and was later followed by a successful run of the same or a later commit is recorded as recovered and is not a violation by itself",
     "the pipelines run in superseded mode, so a change can be deployed by a later run that contains it; this is checked with the commit history, for a bounded number of later runs",
     "commits pushed straight to the branch are not pull requests, so only the head of the branch is checked for them",

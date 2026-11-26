@@ -22,3 +22,5 @@ schemas:
     source: file://schemas/prowler-findings.cue
   - platform: deployment-pipeline
     source: file://schemas/deployment-pipeline.cue
+  - platform: deployment-health
+    source: file://schemas/deployment-health.cue

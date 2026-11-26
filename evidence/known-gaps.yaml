@@ -48,14 +48,22 @@ RSC.CMT.CTRL02.AR01:
 
 RSC.CMT.CTRL03.AR01:
   - only the deployment pipelines of the selected environment are examined; a change deployed some other way is not seen
-  - it shows that the pipeline applied each merged change and finished successfully, not that the deployed system is healthy afterwards (the health of the deployed workloads is not checked)
+  - it shows that the pipeline applied each merged change and finished successfully, not that the deployed system is healthy afterwards (the health of the deployed applications is checked separately, by RSC.CMT.CTRL03.AR02)
   - a run that failed and was later followed by a successful run of the same or a later commit is recorded as recovered and is not a violation by itself
   - the pipelines run in superseded mode, so a change can be deployed by a later run that contains it; this is checked with the commit history, for a bounded number of later runs
   - commits pushed straight to the branch are not pull requests, so only the head of the branch is checked for them
   - the optional pre-merge end-to-end test is a separate signal and is not measured here
-  - The GitOps tool the pipeline installs is not asked whether the applications it syncs are healthy. The management pipeline waits for nothing after bootstrapping it, and the regional pipeline waits only for the platform API to be live.
+  - The pipeline itself does not wait for the deployed applications to become healthy. The management pipeline waits for nothing after bootstrapping the deployment tool, and the regional pipeline waits only for the platform API to be live. Whether the applications are healthy afterwards is read separately, from the deployment tool's metrics, by RSC.CMT.CTRL03.AR02.
   - Execution history is read up to 30 pages of 100 runs and merged pull requests up to 20 pages of 50. Collection is marked incomplete, never silently truncated, past either cap.
   - A merged change counts as deployed if one of the first three successful runs after it applied it, or applied a commit that contains it. One deployed only by a later run than that is reported as not deployed.
   - Time is judged against the collection's own timestamp and an allowed lag set in the environment configuration. A change or head newer than the lag is not judged yet.
   - The applied record is the pipeline's own export. If it is absent on a successful run, that run is taken to have applied its source commit, which the build itself asserts.
 
+RSC.CMT.CTRL03.AR02:
+  - It reads the state the deployment tool reports through the platform's metrics, so it depends on that metrics pipeline and on the API gateway's resource policy; if either changes, collection becomes incomplete, never a pass.
+  - "Only applications the deployment tool itself reports are examined: workloads it does not manage, and anything inside an application's pods, are not seen."
+  - An application is judged unhealthy only if it stayed so for the whole lookback window. A break that began inside the window, or a short outage that ended before the run, is not flagged.
+  - An application seen at fewer than 90% of the window's steps (new, renamed, or with metric gaps) is recorded as partially observed and is not judged.
+  - Metrics older than the freshness limit, an empty result for a cluster, or gaps across the window make the collection incomplete, never a pass.
+  - The regional metrics store only holds clusters that forward their metrics to it.
+  - The state is a point-in-time reading of the last lookback window; a daily run does not see what happened between runs.

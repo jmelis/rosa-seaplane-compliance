@@ -75,5 +75,22 @@ mappings:
           merged change was applied to the environment by the automated deployment
           pipeline, that the pipeline finished successfully (the regional pipeline
           also waits for the platform API to be live), and that the environment is
-          running the head of the branch. It does not check the health of the
-          deployed workloads afterwards, which the pipeline does not wait for.
+          running the head of the branch. The health of the deployed workloads
+          afterwards, which the pipeline does not wait for, is checked separately
+          (RSC.CMT.CTRL03.AR02).
+
+  - id: RSC.CMT.MAP.KSI.M05
+    source: RSC.CMT.CTRL03.AR02
+    relationship: supports
+    targets:
+      - entry-id: KSI-CMT-VTD
+        strength: 6
+        rationale: >
+          Validates changes throughout deployment, past the pipeline's own finish.
+          After a deployment, it confirms that the applications that make up each
+          cluster are synchronized with their desired state and healthy, using the
+          state the deployment tool reports, and it fails when an application stays
+          unhealthy, out of sync or never settles for a sustained period (30
+          minutes by default). A state that is transient while a rollout settles
+          is tolerated. It depends on the platform's metrics being recent and
+          complete, and treats anything else as "could not tell", never as healthy.

@@ -16,6 +16,10 @@
     {
       "id": "rosa_seaplane.change_management.deployment_applied",
       "requirement_id": "RSC.CMT.CTRL03.AR01"
+    },
+    {
+      "id": "rosa_seaplane.change_management.deployment_workloads_healthy",
+      "requirement_id": "RSC.CMT.CTRL03.AR02"
     }
   ]
 }

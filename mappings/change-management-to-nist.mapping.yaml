@@ -63,6 +63,10 @@ mappings:
         strength: 6
         rationale: The audit log is on in each region checked and records the management events (changes to the environment) that are logged.
 
+  # RSC.CMT.CTRL03.AR02 (deployed applications are synchronized and healthy) is deliberately
+  # not mapped to an 800-53 control here. CM-03(02) asks for testing and validation BEFORE a
+  # change is finalized, and this check runs after deployment; CM-03 is already evidenced by
+  # M04 for the deployment itself. Revisit if the team reads the controls differently.
   - id: RSC.CMT.MAP.NIST.M04
     source: RSC.CMT.CTRL03.AR01
     relationship: supports

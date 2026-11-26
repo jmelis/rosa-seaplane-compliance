@@ -285,6 +285,41 @@ rules:
       the pipeline, since its record is what the deployment check relies on.
     example: "example-pipeline: the run started 2026-11-24T09:01:00Z is succeeded but its applied record says otherwise [rule: deployment.record-contradicts-status]"
 
+  # --- RSC.CMT.CTRL03.AR02: deployed applications are synchronized and healthy -----
+  health.collection-incomplete:
+    ar: RSC.CMT.CTRL03.AR02
+    kind: incomplete-evidence
+    title: The state of the deployed applications could not be read reliably
+    fix: >
+      Read the reason in the message: a failed query, metrics older than the freshness limit,
+      gaps across the lookback window, or a cluster that reports no applications. Restore the
+      metrics (the deployment tool's scrape, the forwarding to the regional metrics store, or the
+      API gateway's access policy) and re-run. Until then nothing can be concluded about whether
+      the deployed applications are healthy.
+    example: "example-cluster: the state of the deployed applications could not be read reliably (the newest sample is 900 seconds old, older than the 300 second freshness limit), so nothing can be concluded [rule: health.collection-incomplete]"
+  health.application-unhealthy:
+    ar: RSC.CMT.CTRL03.AR02
+    kind: violation
+    title: An application stayed unhealthy or out of sync for the whole lookback window
+    subject: 'application (?P<subject>\S+) was'
+    fix: >
+      Open the application in the deployment tool, find why it is degraded, missing, or out of
+      sync with its desired state (for example a failing resource, a manual change, or a sync that
+      is blocked) and fix the cause. It is judged unhealthy only if it was never healthy and in
+      sync at any point of the window, so a rollout that settled is not flagged.
+    example: "example-cluster: application example-app was unhealthy for the whole 30-minute window (sync: out-of-sync, health: healthy) [rule: health.application-unhealthy]"
+  health.application-stuck:
+    ar: RSC.CMT.CTRL03.AR02
+    kind: violation
+    title: An application kept progressing without ever settling
+    subject: 'application (?P<subject>\S+) kept'
+    fix: >
+      An application that is still progressing after the whole window is not finishing its
+      rollout (for example a resource whose readiness never completes). Find the resource the
+      deployment tool is waiting on and fix it, or correct the application's health definition
+      if it never reports healthy by design.
+    example: "example-cluster: application example-app kept progressing without ever settling for the whole 30-minute window [rule: health.application-stuck]"
+
 # Findings that come from the collectors' manifests, not from a Rego denial.
 collection-rules:
   collection.target-not-reached:

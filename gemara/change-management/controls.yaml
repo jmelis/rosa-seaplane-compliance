@@ -51,7 +51,8 @@ controls:
     group: change-management
     objective: >
       A change that has been reviewed and merged reaches the environment through the
-      automated deployment pipeline, and the deployment succeeds.
+      automated deployment pipeline, the deployment succeeds, and the deployed
+      applications become and stay healthy.
     assessment-requirements:
       - id: RSC.CMT.CTRL03.AR01
         text: >
@@ -61,9 +62,21 @@ controls:
           running the head of the default branch, allowing a short delay for the
           deployment itself. It confirms that deployments were applied and finished
           successfully; it does not confirm that the deployed system is healthy
-          afterwards, and the evidence states what was checked.
+          afterwards (that is RSC.CMT.CTRL03.AR02), and the evidence states what was
+          checked.
         applicability:
           - deployment_pipelines
+        state: Active
+      - id: RSC.CMT.CTRL03.AR02
+        text: >
+          After a deployment, the applications that make up the environment must be
+          synchronized with their desired state and healthy. A state that is transient
+          while a rollout settles is tolerated; an application that stays unhealthy,
+          or never finishes settling, for the whole lookback window is not. The state
+          is read from the metrics the deployment tool reports, and is trusted only
+          when it is recent and complete; the evidence states what was checked.
+        applicability:
+          - deployment_clusters
         state: Active
     state: Active
 groups:
@@ -92,3 +105,6 @@ metadata:
     - id: deployment_pipelines
       title: Deployment Pipelines
       description: Controls that apply to the automated deployment pipelines of an environment.
+    - id: deployment_clusters
+      title: Deployment Clusters
+      description: Controls that apply to the clusters an environment is deployed to, and the applications running on them.
