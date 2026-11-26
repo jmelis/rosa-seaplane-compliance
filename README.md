@@ -98,6 +98,9 @@ you, look here first.
 - **Evidence locker:** an S3 bucket where `make push-evidence` keeps each run's
   evidence and scan results under a timestamped, append-only prefix, so history
   survives between runs.
+- **Deployment pipeline:** the automated pipeline (AWS CodePipeline, one per cluster) that
+  applies a merged change to an environment. `RSC.CMT.CTRL03.AR01` checks that each merged
+  change reached the environment through it and that the run succeeded.
 - **Collector and evidence:** a collector (`evidence/*.sh`) gathers raw facts
   (GitHub API, later AWS) and normalizes them into **evidence**, a JSON file per
   target in `evidence/output/`.
@@ -317,8 +320,8 @@ file and the schema.
 - `mappings/vendor/fedramp/` the FedRAMP consolidated rules dataset (the authority,
   read by `scripts/fedramp_data.py`), the SDR schemas, and legacy `layer*` reference
   files that no code reads.
-- `config/` `scope.yaml` (repositories in scope), `environments/` (regions and
-  logical account names, no IDs), `automation.yaml` (the automation exemption),
+- `config/` `scope.yaml` (repositories in scope), `environments/` (regions, logical
+  account names and the deployment pipelines, no IDs), `automation.yaml` (the automation exemption),
   `aws/` (the read-only role), `prowler/checks.yaml` (which Prowler checks back which AR, and why),
   `findings/rules.yaml` (title and fix hint for every rule id a Rego `deny` carries as `[rule: <id>]`).
 - `opa/<domain>/policy/*.rego` the checks, one package per AR; each judges only
@@ -381,8 +384,25 @@ MANUAL) is denied, never passed. Prowler runs through the read-only role, its ve
 pinned, and its raw output (IDs, ARNs, compliance text) is discarded: only the fields
 the policy needs are kept.
 
+## How the deployment check works
+
+`RSC.CMT.CTRL03.AR01` covers what happens after the merge. For each deployment pipeline
+listed under `deployment:` in `config/environments/<env>.yaml` (names only, plus the
+repository and branch deployed and an allowed delay), the collector reads the pipeline's
+execution history and the Apply step's exported record (`APPLIED`, `APPLIED_SHA`) through
+the read-only role, and the repository's merged pull requests and branch head through
+`gh`. A merged change counts as deployed when a successful run applied it, or applied a
+later commit that contains it (the pipelines run in superseded mode, so a newer run can
+overtake an older one); the policy denies a change that was never deployed within the
+allowed delay, a head that is not deployed, a latest run that failed and was not recovered
+or is stuck, and an applied record that contradicts the run's status. A run that failed and
+was later recovered is kept in the evidence but is not a violation. It shows that deployments
+were applied and finished, **not** that what was deployed is healthy afterwards: nothing waits
+for the GitOps tool's applications today, so that stays a documented gap.
+
 ## Known gaps
 
+- The health of the deployed workloads after the deployment pipeline finishes is not checked (the pipelines do not wait for it).
 - `gemara/change-management` is the only control domain.
 - AR02 does not detect admin-bypass merges (needs the org audit log API).
 - AR02 of the identity control cannot see keys deleted inside the window, calls the audit log
