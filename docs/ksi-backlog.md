@@ -26,7 +26,7 @@ Built: `KSI-CMT-VTD`, `KSI-CMT-LMC`, `KSI-IAM-SNU`. Remaining: **32** (23 automa
 
 Ordered by effort against value; reorder freely. All of it needs the usual care: two methods of different kinds per KSI, and a person reading what each Prowler check measures.
 
-1. **Reuse what already exists** (cheap, and each proves the pattern again): `KSI-IAM-AAM` (the credential report evidence is already collected), `KSI-SVC-ACM` and `KSI-CMT-RMV` (Argo CD state is readable through the metrics API we verified), `KSI-MLA-ALA`, `KSI-PIY-GIV`.
+1. **Reuse what already exists** (cheap, and each proves the pattern again): `KSI-IAM-AAM` (the credential report evidence is already collected), `KSI-SVC-ACM` and `KSI-CMT-RMV` (Argo CD state is readable through the metrics API we verified; the signed-query helper `evidence/lib/sigv4.py` and the client in `evidence/lib/argocd_health.py` already exist and can be reused), `KSI-MLA-ALA`, `KSI-PIY-GIV`.
 2. **Configuration KSIs where Prowler has many candidates** (high value, but a big list to read and choose from, so budget the reading): `KSI-SVC-SIN`, `KSI-CNA-RNT`, `KSI-CNA-ULN`, `KSI-CNA-MAT`, `KSI-CNA-DFP`, `KSI-CNA-OFA`, `KSI-SVC-ASM`.
 3. **Monitoring and supply chain**: `KSI-MLA-OSM`, `KSI-MLA-LET`, `KSI-MLA-EVC`, `KSI-SCR-MON`, `KSI-SVC-VRI`, `KSI-CNA-EIS`, `KSI-CNA-IBP`.
 4. **Hard or dependent on things we do not have**: `KSI-IAM-ELP` and `KSI-IAM-JIT` (50+ related controls each and real permission analysis), `KSI-IAM-APM` (the identity provider is outside AWS), `KSI-SVC-VCM` (probably needs cluster-side access).

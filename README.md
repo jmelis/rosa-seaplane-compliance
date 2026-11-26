@@ -403,12 +403,33 @@ overtake an older one); the policy denies a change that was never deployed withi
 allowed delay, a head that is not deployed, a latest run that failed and was not recovered
 or is stuck, and an applied record that contradicts the run's status. A run that failed and
 was later recovered is kept in the evidence but is not a violation. It shows that deployments
-were applied and finished, **not** that what was deployed is healthy afterwards: nothing waits
-for the GitOps tool's applications today, so that stays a documented gap.
+were applied and finished, **not** that what was deployed is healthy afterwards: nothing in the
+pipelines waits for that, which is why `RSC.CMT.CTRL03.AR02` exists.
+
+`RSC.CMT.CTRL03.AR02` checks the health of what was deployed. The deployment tool's application
+state (`sync` and `health` per application) is scraped into Prometheus and forwarded to a metrics
+store behind an API gateway in the regional account; its resource policy lets principals of that
+account run read queries, and the read-only role is one, so **no cluster access is used or
+needed**. For each cluster listed under `deployment: health:` (names only, plus the lookback
+window in minutes, a freshness limit and a step) the collector finds the gateway by name, makes
+signed `GET` queries (`evidence/lib/sigv4.py`, tested against AWS's published vectors) and
+judges every application over the lookback window (30 minutes by default):
+
+- **Unhealthy for the window:** it was never healthy and in sync at any step, and was bad (out of
+  sync, degraded, missing, unknown) at one or more. A violation.
+- **Stuck progressing:** it was progressing at every step and never settled. A violation.
+- **Tolerated:** anything that was healthy and in sync at least once in the window, so a rollout
+  that settled or a blip that cleared is not flagged. An application seen at fewer than 90% of the
+  steps (new, renamed, metric gaps) is recorded as partially observed and not judged.
+- **Could not tell, never a pass:** a failed query, a newest sample older than the freshness limit
+  (300 seconds by default), a cluster that reports no applications, or gaps across the window make
+  the collection incomplete, which is its own finding.
 
 ## Known gaps
 
-- The health of the deployed workloads after the deployment pipeline finishes is not checked (the pipelines do not wait for it).
+- The health check (`RSC.CMT.CTRL03.AR02`) flags only an application that stayed unhealthy for the
+  whole lookback window, so a break that began inside the window, or an outage between daily runs,
+  is not seen; it depends on the platform's metrics pipeline and on the metrics gateway's access policy.
 - `gemara/change-management` is the only control domain.
 - AR02 does not detect admin-bypass merges (needs the org audit log API).
 - AR02 of the identity control cannot see keys deleted inside the window, calls the audit log
