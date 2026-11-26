@@ -40,3 +40,17 @@ RSC.IAM.CTRL01.AR02:
 RSC.CMT.CTRL02.AR01:
   - Prowler's trail checks pass when any trail visible in the account is logging, including an organization-wide trail the account does not own. They do not confirm that the account has a trail of its own.
   - The verdict on each fact is Prowler's, at the pinned version. A different version may measure a check differently, so the collector refuses any other version.
+
+RSC.CMT.CTRL03.AR01:
+  - only the deployment pipelines of the selected environment are examined; a change deployed some other way is not seen
+  - it shows that the pipeline applied each merged change and finished successfully, not that the deployed system is healthy afterwards (the health of the deployed workloads is not checked)
+  - a run that failed and was later followed by a successful run of the same or a later commit is recorded as recovered and is not a violation by itself
+  - the pipelines run in superseded mode, so a change can be deployed by a later run that contains it; this is checked with the commit history, for a bounded number of later runs
+  - commits pushed straight to the branch are not pull requests, so only the head of the branch is checked for them
+  - the optional pre-merge end-to-end test is a separate signal and is not measured here
+  - The GitOps tool the pipeline installs is not asked whether the applications it syncs are healthy. The management pipeline waits for nothing after bootstrapping it, and the regional pipeline waits only for the platform API to be live.
+  - Execution history is read up to 30 pages of 100 runs and merged pull requests up to 20 pages of 50. Collection is marked incomplete, never silently truncated, past either cap.
+  - A merged change counts as deployed if one of the first three successful runs after it applied it, or applied a commit that contains it. One deployed only by a later run than that is reported as not deployed.
+  - Time is judged against the collection's own timestamp and an allowed lag set in the environment configuration. A change or head newer than the lag is not judged yet.
+  - The applied record is the pipeline's own export. If it is absent on a successful run, that run is taken to have applied its source commit, which the build itself asserts.
+

@@ -46,6 +46,26 @@ controls:
           - aws_accounts
         state: Active
     state: Active
+  - id: RSC.CMT.CTRL03
+    title: Merged Changes Are Deployed by Automation
+    group: change-management
+    objective: >
+      A change that has been reviewed and merged reaches the environment through the
+      automated deployment pipeline, and the deployment succeeds.
+    assessment-requirements:
+      - id: RSC.CMT.CTRL03.AR01
+        text: >
+          Every change merged to the default branch in the evaluation window must
+          have been deployed to the environment by the automated deployment
+          pipeline, the deployment must have succeeded, and the environment must be
+          running the head of the default branch, allowing a short delay for the
+          deployment itself. It confirms that deployments were applied and finished
+          successfully; it does not confirm that the deployed system is healthy
+          afterwards, and the evidence states what was checked.
+        applicability:
+          - deployment_pipelines
+        state: Active
+    state: Active
 groups:
   - id: change-management
     title: Change Management
@@ -69,3 +89,6 @@ metadata:
     - id: aws_accounts
       title: AWS Accounts
       description: Controls that apply to the AWS accounts of an environment (central, regional, management).
+    - id: deployment_pipelines
+      title: Deployment Pipelines
+      description: Controls that apply to the automated deployment pipelines of an environment.

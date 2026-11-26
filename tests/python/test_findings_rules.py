@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "evidence/lib"))
 
 import build_findings as bf  # noqa: E402
 import build_trace  # noqa: E402
+import deployment_pipeline  # noqa: E402
 import iam_key_usage  # noqa: E402
 
 REGO_FILES = [p for p in sorted(ROOT.glob("opa/*/policy/*.rego")) if not p.name.endswith("_test.rego")]
@@ -100,6 +101,11 @@ class Limits(unittest.TestCase):
     def test_the_collectors_own_recorded_limitations_are_in_the_sidecar(self):
         listed = [" ".join(t.split()) for t in self.sidecar["RSC.IAM.CTRL01.AR02"]]
         for limitation in iam_key_usage.LIMITATIONS:
+            self.assertIn(" ".join(limitation.split()), listed, "the collector records a limit the sidecar does not")
+
+    def test_the_deployment_collectors_own_recorded_limitations_are_in_the_sidecar(self):
+        listed = [" ".join(t.split()) for t in self.sidecar["RSC.CMT.CTRL03.AR01"]]
+        for limitation in deployment_pipeline.LIMITATIONS:
             self.assertIn(" ".join(limitation.split()), listed, "the collector records a limit the sidecar does not")
 
     def test_prowler_does_not_cover_items_are_added_for_their_requirement(self):

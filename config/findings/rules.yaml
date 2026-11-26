@@ -209,6 +209,64 @@ rules:
       role), then delete the key. The configuration check lists which keys still exist.
     example: "central: build-bot authenticated with a long-term credential in the last 30 days (at least 50 event(s)) [rule: credential-use.long-term-authentication]"
 
+  # --- RSC.CMT.CTRL03.AR01: merged changes are deployed by the pipeline -----
+  deployment.collection-incomplete:
+    ar: RSC.CMT.CTRL03.AR01
+    kind: incomplete-evidence
+    title: The deployment history could not be fully read
+    fix: >
+      Read the reason in the message (a page cap, a record or a comparison that failed). Fix
+      the access, or narrow the window (RSC_WINDOW_DAYS), and re-run. Until then nothing can be
+      concluded about whether changes reached this environment.
+    example: "example-pipeline: the deployment history could not be fully read (the execution history is longer than 30 pages), so nothing can be concluded [rule: deployment.collection-incomplete]"
+  deployment.change-not-deployed:
+    ar: RSC.CMT.CTRL03.AR01
+    kind: violation
+    title: A merged change was never deployed by a successful run
+    subject: 'change (?P<subject>[0-9a-f]{7}) merged'
+    fix: >
+      Find out why the pipeline never applied it (open the failed or missing run), fix the
+      cause and re-run the pipeline on the current head of the branch: that also deploys the
+      earlier changes the head contains.
+    example: "example-pipeline: change 2222222 merged 2026-11-23T09:00:00Z was not deployed by a successful run (latest attempt: failed) [rule: deployment.change-not-deployed]"
+  deployment.head-not-deployed:
+    ar: RSC.CMT.CTRL03.AR01
+    kind: violation
+    title: The environment is not running the head of the branch
+    subject: 'head of \S+ \((?P<subject>[0-9a-f]{7})'
+    fix: >
+      Re-run the pipeline on the head of the branch and fix whatever made the last run fail or
+      never start. Until it succeeds the environment is running older code than was merged.
+    example: "example-pipeline: the environment is not running the head of main (1111111, committed 2026-11-24T09:00:00Z); latest attempt: failed [rule: deployment.head-not-deployed]"
+  deployment.latest-execution-failed:
+    ar: RSC.CMT.CTRL03.AR01
+    kind: violation
+    title: The latest deployment run failed and was not recovered
+    subject: 'run started (?P<subject>\S+) is'
+    fix: >
+      Open the failed run, fix the cause and re-run it. A failed run that a later successful
+      run recovers is not reported.
+    example: "example-pipeline: the latest deployment run started 2026-11-24T09:30:00Z is failed and no later run recovered it [rule: deployment.latest-execution-failed]"
+  deployment.latest-execution-stuck:
+    ar: RSC.CMT.CTRL03.AR01
+    kind: violation
+    title: The latest deployment run is stuck
+    subject: 'run started (?P<subject>\S+) is'
+    fix: >
+      Open the run and find what it is waiting for. Stop it and start it again if it cannot
+      finish, then confirm the environment reaches the head of the branch.
+    example: "example-pipeline: the latest deployment run started 2026-11-24T09:30:00Z is still in-progress after the allowed lag [rule: deployment.latest-execution-stuck]"
+  deployment.record-contradicts-status:
+    ar: RSC.CMT.CTRL03.AR01
+    kind: violation
+    title: The pipeline's applied record contradicts the run's status
+    subject: 'run started (?P<subject>\S+) is'
+    fix: >
+      The run's status and its own applied record disagree (for example a succeeded run that
+      says it applied nothing, or applied another commit). Inspect that run's Apply step and fix
+      the pipeline, since its record is what the deployment check relies on.
+    example: "example-pipeline: the run started 2026-11-24T09:01:00Z is succeeded but its applied record says otherwise [rule: deployment.record-contradicts-status]"
+
 # Findings that come from the collectors' manifests, not from a Rego denial.
 collection-rules:
   collection.target-not-reached:

@@ -54,7 +54,7 @@ class PolicyArs(unittest.TestCase):
         cwd = os.getcwd()
         os.chdir(ROOT)
         try:
-            self.assertEqual(entrypoint.policy_ars(), [AR1, "RSC.CMT.CTRL02.AR01", AR2, "RSC.IAM.CTRL01.AR01", "RSC.IAM.CTRL01.AR02"])
+            self.assertEqual(entrypoint.policy_ars(), [AR1, "RSC.CMT.CTRL02.AR01", "RSC.CMT.CTRL03.AR01", AR2, "RSC.IAM.CTRL01.AR01", "RSC.IAM.CTRL01.AR02"])
         finally:
             os.chdir(cwd)
 

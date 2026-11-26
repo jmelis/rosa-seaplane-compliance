@@ -12,6 +12,10 @@
     {
       "id": "rosa_seaplane.change_management.prowler_account_change_logging",
       "requirement_id": "RSC.CMT.CTRL02.AR01"
+    },
+    {
+      "id": "rosa_seaplane.change_management.deployment_applied",
+      "requirement_id": "RSC.CMT.CTRL03.AR01"
     }
   ]
 }

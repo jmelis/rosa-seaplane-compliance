@@ -63,3 +63,17 @@ mappings:
           being stopped or altered. This is the configuration half of logging and
           monitoring modifications. It does not cover alerts on other kinds of
           change, or whether anyone responds to an alert.
+
+  - id: RSC.CMT.MAP.KSI.M04
+    source: RSC.CMT.CTRL03.AR01
+    relationship: supports
+    targets:
+      - entry-id: KSI-CMT-VTD
+        strength: 6
+        rationale: >
+          Extends the validation of changes past the merge. It confirms that each
+          merged change was applied to the environment by the automated deployment
+          pipeline, that the pipeline finished successfully (the regional pipeline
+          also waits for the platform API to be live), and that the environment is
+          running the head of the branch. It does not check the health of the
+          deployed workloads afterwards, which the pipeline does not wait for.

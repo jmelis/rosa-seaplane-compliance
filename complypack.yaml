@@ -20,3 +20,5 @@ schemas:
     source: file://schemas/principal-credentials.cue
   - platform: prowler-findings
     source: file://schemas/prowler-findings.cue
+  - platform: deployment-pipeline
+    source: file://schemas/deployment-pipeline.cue

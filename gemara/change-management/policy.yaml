@@ -71,6 +71,21 @@ adherence:
             type: Software
             uri: https://github.com/complytime/complytime-providers/tree/main/cmd/opa-provider
 
+    - id: RSC.CMT.POL01.AP04
+      requirement-id: RSC.CMT.CTRL03.AR01
+      frequency: daily
+      evaluation-methods:
+        - id: RSC.CMT.POL01.AP04.EM01
+          type: Behavioral
+          mode: Automated
+          required: true
+          description: opa/conftest evaluates each deployment pipeline's execution history against the merged changes (collected from the pipeline and the repository) with deployment_applied.rego.
+          executor:
+            id: opa
+            name: opa-provider
+            type: Software
+            uri: https://github.com/complytime/complytime-providers/tree/main/cmd/opa-provider
+
     - id: RSC.CMT.POL01.AP02
       requirement-id: RSC.CMT.CTRL01.AR02
       frequency: daily

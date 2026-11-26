@@ -62,3 +62,11 @@ mappings:
       - entry-id: "AU-02"
         strength: 6
         rationale: The audit log is on in each region checked and records the management events (changes to the environment) that are logged.
+
+  - id: RSC.CMT.MAP.NIST.M04
+    source: RSC.CMT.CTRL03.AR01
+    relationship: supports
+    targets:
+      - entry-id: "CM-03"
+        strength: 4
+        rationale: Confirms that approved changes were implemented in the environment by the automated pipeline, and that the implementation succeeded.
