@@ -41,3 +41,15 @@ deployment:
       account: central
     - name: mc01-pipeline
       account: central
+  # The state of the deployed workloads (their sync and health), read through the platform's
+  # metrics API in `account`; taken from documented facts only: the same gateway module and cluster names, not verified live because the read-only role is not applied in stage. The metrics carry a `cluster` label equal to the
+  # cluster id set by the platform's monitoring values, so `clusters` are those ids. A
+  # workload is judged unhealthy only if it stays so for the whole `lookback-minutes`
+  # (a rollout that is still settling is tolerated); metrics older than `freshness-seconds`
+  # are not trusted. Names only, no IDs.
+  health:
+    account: regional
+    clusters: [regional, mc01]
+    lookback-minutes: 30
+    freshness-seconds: 300
+    step-seconds: 60

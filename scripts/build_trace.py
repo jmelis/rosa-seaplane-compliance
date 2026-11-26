@@ -234,6 +234,9 @@ def load_scope(root: Path, ars: dict, evidence_dir: Path, environment_name: str 
             if not listed and a == "deployment_pipelines":
                 # Likewise the deployment pipelines the environment config lists.
                 listed = environment_config.pipeline_names(environment_name)
+            if not listed and a == "deployment_clusters":
+                # And the clusters whose deployed applications are health-checked.
+                listed = environment_config.cluster_names(environment_name)
             expected += listed
         mf = evidence_dir / ar_id / "manifest.json"
         manifest = json.loads(mf.read_text()) if mf.is_file() else None

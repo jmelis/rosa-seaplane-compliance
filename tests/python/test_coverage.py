@@ -146,6 +146,22 @@ class AwsTargets(unittest.TestCase):
         self.assertEqual(sorted(scope["missing"]), ["management-mc01", "regional"])
 
 
+class DeploymentClusterTargets(unittest.TestCase):
+    CLUSTERS = ["regional", "mc01"]
+
+    def test_expected_targets_for_clusters_are_the_logical_names(self):
+        self.assertEqual(coverage.expected_targets(["deployment-cluster"], None, ["org/a"], ["central"], ["p"], self.CLUSTERS), self.CLUSTERS)
+
+    def test_a_cluster_the_collector_never_listed_is_missing_scope(self):
+        data = {"manifests": {AR1: manifest(regional="collected")}, "repos": [], "accounts": [], "pipelines": [],
+                "clusters": self.CLUSTERS}
+        scope = coverage.method_scope(AR1, ["deployment-cluster"], data)
+        self.assertEqual((scope["reached"], scope["total"], scope["missing"]), (1, 2, ["mc01"]))
+
+    def test_the_applicability_maps_to_the_cluster_target_type(self):
+        self.assertEqual(coverage.APPLICABILITY_TARGET["deployment_clusters"], "deployment-cluster")
+
+
 class DeploymentPipelineTargets(unittest.TestCase):
     PIPELINES = ["regional-pipeline", "mc01-pipeline"]
 

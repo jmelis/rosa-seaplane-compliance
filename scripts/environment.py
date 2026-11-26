@@ -11,6 +11,8 @@ is set up by scripts/aws_access.py.
     environment.py --regions [name]     print the regions, comma separated
     environment.py --pipelines [name]   print the deployment pipeline names, one per line
     environment.py --deployment [name]  print the deployment block as JSON
+    environment.py --clusters [name]    print the clusters whose deployed workloads are health-checked
+    environment.py --health [name]      print the health block (metrics account, clusters, window) as JSON
 """
 import json
 import os
@@ -84,7 +86,39 @@ def _deployment(block, account_names: list, filename: str):
         raise EnvironmentError_(f"{filename}: deployment needs at least one pipeline")
     if len({p["name"] for p in pipelines}) != len(pipelines):
         raise EnvironmentError_(f"{filename}: a deployment pipeline is listed twice")
-    return {"repository": repository, "branch": branch, "allowed_lag_minutes": lag, "pipelines": pipelines}
+    return {"repository": repository, "branch": branch, "allowed_lag_minutes": lag, "pipelines": pipelines,
+            "health": _health(block.get("health"), account_names, filename)}
+
+
+def _whole(block: dict, key: str, low: int, high: int, default: int, filename: str) -> int:
+    value = block.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+        raise EnvironmentError_(f"{filename}: deployment.health.{key} must be a whole number between {low} and {high}")
+    return value
+
+
+def _health(block, account_names: list, filename: str):
+    """The validated health block (where the deployed workloads' state is read from, which
+    clusters must report, how far back and how fresh), or None when there is none."""
+    if block is None:
+        return None
+    if not isinstance(block, dict):
+        raise EnvironmentError_(f"{filename}: deployment.health must be a mapping")
+    account = block.get("account")
+    if account not in account_names:
+        raise EnvironmentError_(f"{filename}: deployment.health.account {account!r} is not an account this environment lists")
+    clusters = block.get("clusters")
+    if not isinstance(clusters, list) or not clusters:
+        raise EnvironmentError_(f"{filename}: deployment.health.clusters needs at least one cluster")
+    for c in clusters:
+        if not isinstance(c, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,63}", c):
+            raise EnvironmentError_(f"{filename}: deployment.health.clusters has an invalid cluster name {c!r}")
+    if len(set(clusters)) != len(clusters):
+        raise EnvironmentError_(f"{filename}: deployment.health.clusters lists a cluster twice")
+    return {"account": account, "clusters": list(clusters),
+            "lookback_minutes": _whole(block, "lookback-minutes", 5, 1440, 30, filename),
+            "freshness_seconds": _whole(block, "freshness-seconds", 30, 3600, 300, filename),
+            "step_seconds": _whole(block, "step-seconds", 15, 600, 60, filename)}
 
 
 def deployment(name: str = None, environ: dict = None, env_dir: Path = ENV_DIR) -> dict:
@@ -94,6 +128,20 @@ def deployment(name: str = None, environ: dict = None, env_dir: Path = ENV_DIR) 
     if env["deployment"] is None:
         raise EnvironmentError_(f"environment {env['name']!r} has no deployment block in config/environments/")
     return env["deployment"]
+
+
+def health(name: str = None, environ: dict = None, env_dir: Path = ENV_DIR) -> dict:
+    """The health block of an environment; an environment without one is an error, never a guess."""
+    dep = deployment(name, environ, env_dir)
+    if dep["health"] is None:
+        raise EnvironmentError_(f"environment {load(name, environ, env_dir)['name']!r} has no deployment.health block in config/environments/")
+    return dep["health"]
+
+
+def cluster_names(name: str = None, environ: dict = None, env_dir: Path = ENV_DIR) -> list:
+    """Cluster names whose deployed workloads are health-checked (empty if none are configured)."""
+    dep = load(name, environ, env_dir)["deployment"]
+    return list(dep["health"]["clusters"]) if dep and dep["health"] else []
 
 
 def pipeline_names(name: str = None, environ: dict = None, env_dir: Path = ENV_DIR) -> list:
@@ -116,6 +164,8 @@ def main() -> None:
         "--accounts": lambda: "\n".join(a["name"] for a in load(env_name)["accounts"]),
         "--pipelines": lambda: "\n".join(pipeline_names(env_name)),
         "--deployment": lambda: json.dumps(deployment(env_name)),
+        "--clusters": lambda: "\n".join(health(env_name)["clusters"]),
+        "--health": lambda: json.dumps(health(env_name)),
     }
     for flag, fn in simple.items():
         if flag in flags:
@@ -138,6 +188,8 @@ def main() -> None:
         print(f"  deployment pipelines: {', '.join(p['name'] for p in env['deployment']['pipelines'])}")
     else:
         print("  deployment pipelines: none configured")
+    if env["deployment"] and env["deployment"]["health"]:
+        print(f"  health-checked clusters: {', '.join(env['deployment']['health']['clusters'])}")
 
 
 if __name__ == "__main__":

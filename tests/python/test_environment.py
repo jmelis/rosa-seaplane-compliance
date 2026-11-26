@@ -139,5 +139,68 @@ class DeploymentBlock(unittest.TestCase):
         self.assertNotEqual(run("--deployment", "nonexistent").returncode, 0)
 
 
+HEALTH = """  health:
+    account: regional
+    clusters: [regional, mc01]
+    lookback-minutes: 20
+    freshness-seconds: 120
+    step-seconds: 30
+"""
+
+
+class HealthBlock(unittest.TestCase):
+    def load(self, text):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            (Path(t) / "demo.yaml").write_text(text)
+            return environment.load("demo", {}, Path(t))
+
+    def test_shipped_environments_name_their_clusters_and_the_window(self):
+        for name in ("integration", "stage"):
+            h = environment.health(name, {})
+            self.assertEqual((h["account"], h["clusters"]), ("regional", ["regional", "mc01"]))
+            self.assertEqual((h["lookback_minutes"], h["freshness_seconds"], h["step_seconds"]), (30, 300, 60))
+            self.assertEqual(environment.cluster_names(name, {}), ["regional", "mc01"])
+
+    def test_a_valid_block_is_parsed_with_its_values(self):
+        h = self.load(BASE + DEPLOYMENT + HEALTH)["deployment"]["health"]
+        self.assertEqual((h["account"], h["clusters"], h["lookback_minutes"], h["freshness_seconds"], h["step_seconds"]),
+                         ("regional", ["regional", "mc01"], 20, 120, 30))
+
+    def test_defaults_when_only_the_required_fields_are_given(self):
+        text = BASE + DEPLOYMENT + "  health:\n    account: regional\n    clusters: [regional]\n"
+        h = self.load(text)["deployment"]["health"]
+        self.assertEqual((h["lookback_minutes"], h["freshness_seconds"], h["step_seconds"]), (30, 300, 60))
+
+    def test_no_health_block_loads_but_never_guesses(self):
+        env = self.load(BASE + DEPLOYMENT)
+        self.assertIsNone(env["deployment"]["health"])
+        self.assertIsNone(self.load(BASE)["deployment"])
+
+    def test_invalid_blocks_are_rejected(self):
+        bad = {
+            "unknown account": HEALTH.replace("account: regional", "account: elsewhere"),
+            "no clusters": HEALTH.replace("clusters: [regional, mc01]", "clusters: []"),
+            "duplicate cluster": HEALTH.replace("[regional, mc01]", "[mc01, mc01]"),
+            "bad cluster name": HEALTH.replace("[regional, mc01]", '["a b"]'),
+            "lookback too small": HEALTH.replace("lookback-minutes: 20", "lookback-minutes: 1"),
+            "lookback not a number": HEALTH.replace("lookback-minutes: 20", "lookback-minutes: soon"),
+            "freshness too large": HEALTH.replace("freshness-seconds: 120", "freshness-seconds: 99999"),
+            "step too small": HEALTH.replace("step-seconds: 30", "step-seconds: 1"),
+            "boolean number": HEALTH.replace("step-seconds: 30", "step-seconds: true"),
+        }
+        for why, block in bad.items():
+            with self.assertRaises(environment.EnvironmentError_, msg=why):
+                self.load(BASE + DEPLOYMENT + block)
+
+    def test_cluster_names_is_empty_without_a_block_and_health_raises(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            (Path(t) / "demo.yaml").write_text(BASE + DEPLOYMENT)
+            self.assertEqual(environment.cluster_names("demo", {}, Path(t)), [])
+            with self.assertRaises(environment.EnvironmentError_):
+                environment.health("demo", {}, Path(t))
+
+
 if __name__ == "__main__":
     unittest.main()
