@@ -244,8 +244,8 @@ changed. The real run may *fail*: that is data, not a defect. Do not make it pas
 
 - **The overall status rollup is not "required checks passed".** It includes items that are not
   required and never resolve on a merged PR (a pending merge-bot status, queued or skipped
-  third-party checks). AR02 reads that rollup today, which makes many of its findings noise; the
-  fix is to judge only the checks branch protection requires.
+  third-party checks). AR02 used to judge that rollup, which made most of its findings noise; it
+  now judges only the checks branch protection requires, per PR, on the last commit.
 - **A GitHub review decision is not how this team approves.** Approval is Prow: `lgtm` and
   `approved` labels set by `/lgtm` and `/approve` commands, which also appear in review bodies,
   and a command made after the merge does nothing. Read how the team actually works.

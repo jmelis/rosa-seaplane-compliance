@@ -353,9 +353,15 @@ file and the schema.
   needs all five facts: the author is allowlisted; the repo's Tide config has a
   dedicated approval-requiring query for it; the approval labels are present; the
   merge bot merged it; and every commit is the author's own with a valid signature.
-  Failing checks and self-merges are still reported. Results state how many merges
-  relied on the exemption, and that its approval is pending until a person other
-  than the proposer fills `approved-by`.
+  Failing required checks and self-merges are still reported. Results state how many
+  merges relied on the exemption, and that its approval is pending until a person other
+  than the proposer fills `approved-by`. AR02 also judges only the status checks the
+  branch protection **requires**, on each PR's last commit; only a success passes
+  (neutral, skipped, pending and never-reported are reported). The overall rollup is
+  not judged: on a merged PR it includes items that never resolve, such as the merge
+  bot's own pending status. In a private repository a fine-grained token cannot read
+  check runs, so only commit statuses are judged and anything else is reported as
+  incomplete evidence, never as a pass or a failure.
 
 ## How the identity checks work
 
