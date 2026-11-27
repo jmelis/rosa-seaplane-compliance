@@ -1,7 +1,7 @@
-# RSC.CMT.CTRL03.AR01: every change merged to the default branch in the evaluation window
+# RSC.CMT.CTRL03.AR01: every change merged to the default branch on the day the evidence covers (one UTC day)
 # is deployed to the environment by the automated deployment pipeline, the deployment
 # succeeded, and the environment is running the head of the branch (within an allowed
-# lag). Input: the JSON from evidence/RSC.CMT.CTRL03.AR01.sh. Package name must match the
+# lag), as of the collection time. Input: the JSON from evidence/RSC.CMT.CTRL03.AR01.sh. Package name must match the
 # "id" in complytime-mapping.json.
 #
 # The collector normalizes the pipeline's own vocabulary (statuses, triggers, the applied
@@ -16,7 +16,10 @@
 #   - a run that failed and was later followed by a success of the same or a later commit
 #     is NOT a violation by itself (the evidence keeps it, marked recovered);
 #   - a change newer than the allowed lag may simply still be deploying, so it is not
-#     denied yet. Zero merges in the window with a complete, healthy history is a pass.
+#     denied yet. A day with no merge and a complete, healthy history is a pass;
+#   - the runs read go from the start of the day to the collection time (a change merged late
+#     on the day is deployed after it), but only runs STARTED on the day are checked for
+#     contradicting their applied record: a later day answers for its own runs.
 #
 # The opa provider evaluates every mapped package against every file in the target's
 # input_path, so each rule is guarded on the evidence's own assessment_requirement.
@@ -119,10 +122,20 @@ contradiction(e) if {
 	e.applied == true
 }
 
+# Evidence without a window is judged whole rather than silently skipped.
+started_on_the_day(_) if not input.window
+
+started_on_the_day(e) if {
+	t := time.parse_rfc3339_ns(e.started)
+	t >= time.parse_rfc3339_ns(input.window.start)
+	t < time.parse_rfc3339_ns(input.window.end)
+}
+
 deny contains msg if {
 	applies
 	complete
 	some e in input.executions
+	started_on_the_day(e)
 	contradiction(e)
 	msg := with_rule("deployment.record-contradicts-status", sprintf("%s: the run started %s is %s but its applied record says otherwise", [target, e.started, e.status]))
 }

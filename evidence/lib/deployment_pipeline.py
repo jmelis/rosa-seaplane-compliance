@@ -3,9 +3,10 @@
 
     deployment_pipeline.py --ar <AR id> --target <pipeline name> --profile <read-only profile>
                            --region us-east-1 --repository owner/name [--branch main]
-                           [--lag-minutes 120] [--window-days 30]
+                           --date YYYY-MM-DD [--lag-minutes 120]
 
-Answers "was every change merged to the default branch in the window deployed to the
+EVENT collector for ONE UTC day, the half-open [D 00:00:00Z, D+1 00:00:00Z) (lib/day_window.py).
+Answers "was every change merged to the default branch on that day deployed to the
 environment by the automated pipeline, did the deployment succeed, and is the
 environment running the head of the branch?" from two sources:
 
@@ -24,7 +25,13 @@ Read-only: list and get calls only, through the read-only profile; GitHub reads 
 Evidence is normalized (schemas/deployment-pipeline.cue). Never recorded: commit
 messages, author names or e-mail addresses, account IDs or ARNs.
 
-Anything that stops the collection from covering the window (history that does not
+The executions read are those from the start of the day up to now (a change merged late on
+the day is deployed after it), and lag, recovery and the state of the head are judged as of
+the collection time. The head and the latest run are the present, not the day: a backfill
+does not judge them (config/history/ar-basis.yaml, state_rules). A day with no merge is a
+complete, empty collection and passes.
+
+Anything that stops the collection from covering the day (history that does not
 reach back to its start, a page cap hit, an applied record or a comparison that failed)
 makes collection.complete false, which the policy denies as "could not tell". Failing to
 read the pipeline's executions or the repository at all is an error and writes no
@@ -41,11 +48,11 @@ import re
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from aws_cli import Aws, AwsError, mask, utc_iso
+from day_window import DayError, day_for
 
-MAX_WINDOW_DAYS = 90
 EXECUTIONS_PER_PAGE = 100
 MAX_EXECUTION_PAGES = 30
 MAX_PR_PAGES = 20
@@ -129,7 +136,7 @@ def normalize_trigger(raw) -> str:
 # --- reading the sources --------------------------------------------------------
 
 def read_executions(aws: Aws, pipeline: str, region: str, window_start: datetime) -> tuple:
-    """(execution summaries newest first, problems). Pages until history reaches the window start."""
+    """(execution summaries newest first, problems). Pages until history reaches the start of the day."""
     out, problems, token, pages = [], [], None, 0
     while True:
         args = ["codepipeline", "list-pipeline-executions", "--pipeline-name", pipeline, "--region", region,
@@ -170,12 +177,13 @@ def applied_record(aws: Aws, pipeline: str, execution_id: str, region: str) -> t
     return applied, sha
 
 
-def read_merged_changes(gh: Gh, repo: str, branch: str, window_start: datetime) -> tuple:
-    """([{sha, merged_at}] oldest first, problems): pull requests merged into the branch in the window.
+def read_merged_changes(gh: Gh, repo: str, branch: str, window_start: datetime, window_end: datetime) -> tuple:
+    """([{sha, merged_at}] oldest first, problems): pull requests merged into the branch in
+    [window_start, window_end).
 
     Pages are ordered by update time (GitHub has no merge-time sort), so paging stops at the
-    first page that reaches pull requests last updated before the window; a PR merged in the
-    window was updated in it.
+    first page that reaches pull requests last updated before the day began; a PR merged on
+    the day was updated on or after its start.
     """
     owner, name = repo.split("/")
     query = """query($owner: String!, $name: String!, $base: String!, $after: String) {
@@ -195,13 +203,13 @@ def read_merged_changes(gh: Gh, repo: str, branch: str, window_start: datetime) 
         for n in nodes:
             merged = n.get("mergedAt")
             sha = ((n.get("mergeCommit") or {}).get("oid") or "").lower()
-            if merged and parse_time(merged) >= window_start and SHA_RE.match(sha):
+            if merged and window_start <= parse_time(merged) < window_end and SHA_RE.match(sha):
                 changes.append({"sha": sha, "merged_at": utc_iso(merged)})
         updated = [parse_time(n["updatedAt"]) for n in nodes if n.get("updatedAt")]
         if not prs["pageInfo"]["hasNextPage"] or (updated and min(updated) < window_start):
             break
         if page_no == MAX_PR_PAGES:
-            problems.append(f"more than {MAX_PR_PAGES} pages of merged pull requests, so the window was not fully read")
+            problems.append(f"more than {MAX_PR_PAGES} pages of merged pull requests, so the day was not fully read")
             break
         after = prs["pageInfo"]["endCursor"]
     changes.sort(key=lambda c: c["merged_at"])
@@ -334,10 +342,9 @@ def mark_recovered(executions: list, contains) -> None:
             e["recovered"] = None
 
 
-def build_evidence(ar: str, target: str, repo: str, branch: str, lag_minutes: int, window_days: int,
+def build_evidence(ar: str, target: str, repo: str, branch: str, lag_minutes: int, day: dict,
                    now: datetime, regions: list, executions: list, head: dict, changes: list,
                    problems: list, containment) -> dict:
-    window_start = now - timedelta(days=window_days)
     problems = list(problems)
     merged = []
 
@@ -367,12 +374,11 @@ def build_evidence(ar: str, target: str, repo: str, branch: str, lag_minutes: in
         "target_type": TARGET_TYPE,
         "repository": repo,
         "branch": branch,
+        "covers_date": day["covers_date"],
+        "window": {"start": day["start"], "end": day["end"]},
         "collection": {
             "complete": not problems,
             "source": SOURCE,
-            "window_days": window_days,
-            "window_start": window_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "window_end": stamp,
             "allowed_lag_minutes": lag_minutes,
             "regions": regions,
             "executions_read": len(executions),
@@ -408,9 +414,9 @@ def normalize_execution(summary: dict) -> dict:
 
 
 def collect(aws: Aws, gh: Gh, ar: str, target: str, repo: str, branch: str, lag_minutes: int,
-            window_days: int, regions: list, now: datetime = None) -> dict:
+            day: dict, regions: list, now: datetime = None) -> dict:
     now = now or datetime.now(timezone.utc)
-    window_start = now - timedelta(days=window_days)
+    window_start, window_end = parse_time(day["start"]), parse_time(day["end"])
     region = regions[0]
     summaries, problems = read_executions(aws, target, region, window_start)
     executions = [normalize_execution(s) for s in summaries if parse_time(s["startTime"]) >= window_start]
@@ -430,22 +436,15 @@ def collect(aws: Aws, gh: Gh, ar: str, target: str, repo: str, branch: str, lag_
     executions.sort(key=lambda e: e["started"], reverse=True)
     try:
         head = read_head(gh, repo, branch)
-        changes, pr_problems = read_merged_changes(gh, repo, branch, window_start)
+        changes, pr_problems = read_merged_changes(gh, repo, branch, window_start, window_end)
     except GhError as e:
         raise CollectionError(f"cannot read {repo}: {e}")
-    return build_evidence(ar, target, repo, branch, lag_minutes, window_days, now, [region], executions,
+    return build_evidence(ar, target, repo, branch, lag_minutes, day, now, [region], executions,
                           head, changes, problems + pr_problems, Containment(gh, repo))
 
 
 def default_branch(gh: Gh, repo: str) -> str:
     return gh.api(f"repos/{repo}", "--jq", "{b: .default_branch}")["b"]
-
-
-def window_days_arg(value: str) -> int:
-    days = int(value)
-    if not 1 <= days <= MAX_WINDOW_DAYS:
-        raise argparse.ArgumentTypeError(f"the window must be between 1 and {MAX_WINDOW_DAYS} days")
-    return days
 
 
 def main() -> None:
@@ -457,16 +456,16 @@ def main() -> None:
     ap.add_argument("--repository", required=True, help="owner/name of the repository whose branch is deployed")
     ap.add_argument("--branch", default="", help="empty means the repository's default branch")
     ap.add_argument("--lag-minutes", type=int, default=120)
-    ap.add_argument("--window-days", type=window_days_arg, default=30)
+    ap.add_argument("--date", required=True, help="the UTC day to cover, YYYY-MM-DD (already checked by the caller)")
     args = ap.parse_args()
     interval = float(os.environ.get("RSC_PIPELINE_INTERVAL", "0.2"))
     try:
         gh = Gh()
         branch = args.branch or default_branch(gh, args.repository)
         evidence = collect(Aws(args.profile, interval=interval), gh, args.ar, args.target, args.repository,
-                           branch, args.lag_minutes, args.window_days, [args.region])
+                           branch, args.lag_minutes, day_for(args.date), [args.region])
         print(json.dumps(evidence, indent=2))
-    except (CollectionError, AwsError, GhError) as e:
+    except (CollectionError, AwsError, GhError, DayError) as e:
         sys.exit(f"ERROR: {mask(str(e))}")
 
 

@@ -4,12 +4,17 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 AR = "RSC.IAM.CTRL01.AR02"
 ACCOUNTS = ("central", "regional", "management-mc01")
 KEY = "AKIA" + "Q" * 12 + "QQQ9"  # built at run time like every fake identifier
+# The day collected: three days ago (a backfill, so no settle delay applies), found at run time so the
+# 90-day limit never expires the test data.
+TODAY = datetime.now(timezone.utc).date()
+DAY_DATE = (TODAY - timedelta(days=3)).isoformat()
 
 # A stand-in for the aws CLI. What each read-only profile returns is a JSON file; every call is logged.
 FAKE_AWS = r'''#!/usr/bin/env python3
@@ -43,13 +48,13 @@ else:
 def trail_event(user="svc"):
     detail = {"userIdentity": {"type": "IAMUser", "userName": user, "accessKeyId": KEY},
               "sourceIPAddress": "203.0.113.9", "userAgent": "agent/1.0"}
-    return {"EventTime": "2026-11-23T10:00:00+00:00", "EventName": "AssumeRole", "EventSource": "sts.amazonaws.com",
+    return {"EventTime": f"{DAY_DATE}T10:00:00+00:00", "EventName": "AssumeRole", "EventSource": "sts.amazonaws.com",
             "Username": user, "AccessKeyId": KEY, "CloudTrailEvent": json.dumps(detail)}
 
 
 QUIET = {"users": ["svc"], "keys": {"svc": [[KEY, "Inactive"]]}, "events": {}}
 BUSY = {"users": ["svc"], "keys": {"svc": [[KEY, "Active"]]}, "events": {KEY: [trail_event()]},
-        "last_used": {KEY: {"LastUsedDate": "2099-01-01T00:00:00+00:00", "Region": "us-east-1"}}}
+        "last_used": {KEY: {"LastUsedDate": f"{DAY_DATE}T10:00:00+00:00", "Region": "us-east-1"}}}
 
 
 class KeyUsageCollector(unittest.TestCase):
@@ -68,6 +73,7 @@ class KeyUsageCollector(unittest.TestCase):
         (self.fake / f"rsc-{name}-ro.json").write_text(json.dumps(cfg))
 
     def run_collector(self, **extra):
+        extra = {"RSC_DATE": DAY_DATE, **extra}
         env = dict(os.environ, PATH=f"{self.tmp.name}/bin:{os.environ['PATH']}", FAKE_AWS_DIR=str(self.fake),
                    RSC_AWS_READY="1", RSC_ENV="integration", RSC_EVIDENCE_DIR=str(self.out),
                    RSC_LOOKUP_INTERVAL="0", RSC_LOOKUP_BACKOFF="0", **extra)
@@ -123,12 +129,37 @@ class KeyUsageCollector(unittest.TestCase):
             self.account(a, {"deny": ["list-users"]})
         self.assertNotEqual(self.run_collector().returncode, 0)
 
-    def test_window_days_is_honoured_and_validated(self):
+    def test_the_day_is_recorded_and_asked_of_cloudtrail(self):
         self.all_quiet()
-        self.run_collector(RSC_WINDOW_DAYS="7")
-        self.assertEqual(self.evidence("regional")["collection"]["window_days"], 7)
-        res = self.run_collector(RSC_WINDOW_DAYS="120")
-        self.assertNotEqual(res.returncode, 0)  # beyond what event history keeps: every account errors
+        self.run_collector()
+        ev = self.evidence("regional")
+        self.assertEqual((ev["covers_date"], ev["window"]["start"]), (DAY_DATE, f"{DAY_DATE}T00:00:00Z"))
+        self.assertEqual(json.loads((self.out / AR / "manifest.json").read_text())["covers_date"], DAY_DATE)
+        lookup = [l for l in (self.fake / "calls.log").read_text().splitlines() if "lookup-events" in l][0]
+        self.assertIn(f"--start-time {DAY_DATE}T00:00:00Z --end-time {(TODAY - timedelta(days=2)).isoformat()}T00:00:00Z", lookup)
+
+    def test_the_default_day_is_yesterday(self):
+        self.all_quiet()
+        res = self.run_collector(RSC_DATE="", RSC_ALLOW_EARLY="1")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(self.evidence("regional")["covers_date"], (TODAY - timedelta(days=1)).isoformat())
+
+    def test_a_day_that_is_not_collectable_fails_before_anything_is_called(self):
+        self.all_quiet()
+        for bad in (TODAY.isoformat(), (TODAY + timedelta(days=1)).isoformat(), "2026-13-45", "yesterday",
+                    (TODAY - timedelta(days=91)).isoformat()):
+            res = self.run_collector(RSC_DATE=bad)
+            self.assertNotEqual(res.returncode, 0, bad)
+            self.assertIn("ERROR", res.stderr)
+        self.assertFalse((self.fake / "calls.log").exists())
+
+    def test_an_early_run_is_refused_unless_allowed(self):
+        self.all_quiet()
+        yesterday = (TODAY - timedelta(days=1)).isoformat()
+        res = self.run_collector(RSC_DATE=yesterday, RSC_SETTLE_MINUTES="100000")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("RSC_ALLOW_EARLY", res.stderr)
+        self.assertEqual(self.run_collector(RSC_DATE=yesterday, RSC_SETTLE_MINUTES="100000", RSC_ALLOW_EARLY="1").returncode, 0)
 
     def test_the_environments_regions_are_recorded(self):
         self.all_quiet()

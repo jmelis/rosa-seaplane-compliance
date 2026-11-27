@@ -6,15 +6,24 @@ set -euo pipefail
 # One evidence file per repository in config/scope.yaml, plus a manifest; see
 # evidence/lib/collect.sh.
 #
-# Orders by UPDATED_AT (GitHub has no MERGED_AT sort) and filters by
-# mergedAt within the first 100 results. Add pagination if merge volume ever
-# exceeds that per window.
+# EVENT collector: it covers ONE UTC day (RSC_DATE, default yesterday; see lib/day_window.py)
+# and the evidence holds exactly the pull requests merged in [day 00:00:00Z, next day
+# 00:00:00Z). A day with no merge is a complete, empty collection, and it passes: what
+# guards against a silent gap is that the repository was reached, the pages were read
+# down to the day and nothing was capped. Rerunning for a past date recovers a missed day.
+# Approvals, checks and the exemption facts are read as they are when the collector runs
+# (a late /lgtm or a changed branch protection is not rewound), which the record states.
+#
+# Orders by UPDATED_AT (GitHub has no MERGED_AT sort), page after page until a page is
+# entirely older than the start of the day (a PR merged on the day was updated on or after
+# it), at most 20 pages of 50. A day deeper than that in a busy repository fails the
+# collection instead of being truncated (known-gaps.yaml).
 
 AR_ID="$(basename "$0" .sh)"
-WINDOW_DAYS="${RSC_WINDOW_DAYS:-30}"
 EVIDENCE_DIR="${RSC_EVIDENCE_DIR:-$(cd "$(dirname "$0")" && pwd)/output}"
 source "$(cd "$(dirname "$0")" && pwd)/lib/collect.sh"
 AUTOMATION_CONFIG="${RSC_AUTOMATION_CONFIG:-${RSC_ROOT}/config/automation.yaml}"
+rsc_day_window || exit 1
 
 if [[ -z "${GITHUB_TOKEN:-}" ]]; then
   echo "ERROR: GITHUB_TOKEN must be set (gh CLI reads it for GraphQL auth)." >&2
@@ -114,12 +123,12 @@ rsc_fill_contexts() {
 }
 
 # Fallback when GraphQL refuses the contexts connection (see the header): fill each
-# in-window PR's contexts from the REST combined status of its last commit. The
+# PR merged on the day from the REST combined status of its last commit. The
 # combined status holds the latest state of every status context. Args: repo
-# raw-json-array cutoff. Prints the array with contexts filled in.
+# raw-json-array day-start day-end. Prints the array with contexts filled in.
 rsc_rest_contexts() {
-  local repo="$1" raw="$2" cutoff="$3" idx oid st
-  for idx in $(jq -r --arg c "${cutoff}" 'to_entries[] | select(.value.mergedAt >= $c) | .key' <<<"${raw}"); do
+  local repo="$1" raw="$2" start="$3" end="$4" idx oid st
+  for idx in $(jq -r --arg s "${start}" --arg e "${end}" 'to_entries[] | select(.value.mergedAt >= $s and .value.mergedAt < $e) | .key' <<<"${raw}"); do
     oid="$(jq -r ".[${idx}].commits.nodes[0].commit.oid // empty" <<<"${raw}")" || return 1
     [[ -n "${oid}" ]] || continue
     st="$(rsc_retry gh api "repos/${repo}/commits/${oid}/status?per_page=100")" || return 1
@@ -133,12 +142,11 @@ rsc_rest_contexts() {
 }
 
 collect_repo() {
-  local repo="$1" out="$2" owner="${1%%/*}" name="${1##*/}" base_ref cutoff after="" page raw="[]" pages=0 tide automation required mode=graphql errf rollup_fields runs_readable=true
+  local repo="$1" out="$2" owner="${1%%/*}" name="${1##*/}" base_ref after="" page raw="[]" pages=0 tide automation required mode=graphql errf rollup_fields runs_readable=true
   base_ref="$(rsc_default_branch "${repo}")" || return 1
   tide="$(rsc_tide_gate "${repo}" "${base_ref}")" || return 1
   automation="$(python3 "${RSC_LIB_DIR}/automation_config.py" "${AUTOMATION_CONFIG}")" || return 1
   required="$(rsc_required_checks "${repo}" "${base_ref}")" || return 1
-  cutoff="$(jq -nr --argjson d "${WINDOW_DAYS}" 'now - ($d * 86400) | gmtime | strftime("%Y-%m-%dT%H:%M:%SZ")')"
 
   local query='
       query($owner: String!, $name: String!, $baseRefName: String!, $after: String) {
@@ -169,8 +177,8 @@ collect_repo() {
   errf="$(mktemp)"
 
   # Pages are ordered by UPDATED_AT (GitHub has no MERGED_AT sort). Keep going
-  # until a page reaches PRs last updated before the window, so a busy repo is
-  # not silently truncated. A PR merged inside the window was updated inside it.
+  # until a page reaches PRs last updated before the day began, so a busy repo is
+  # not silently truncated. A PR merged on the day was updated on or after its start.
   while :; do
     local args=(-f owner="${owner}" -f name="${name}" -f baseRefName="${base_ref}")
     [[ -n "${after}" ]] && args+=(-f after="${after}")
@@ -191,20 +199,20 @@ collect_repo() {
     raw="$(jq -s '.[0] + .[1].data.repository.pullRequests.nodes' <(echo "${raw}") <(echo "${page}"))" || return 1
     pages=$((pages + 1))
     jq -e '.data.repository.pullRequests.pageInfo.hasNextPage' <<<"${page}" >/dev/null || break
-    jq -e --arg c "${cutoff}" '[.data.repository.pullRequests.nodes[].updatedAt] | (length > 0 and min >= $c)' <<<"${page}" >/dev/null || break
+    jq -e --arg c "${DAY_START}" '[.data.repository.pullRequests.nodes[].updatedAt] | (length > 0 and min >= $c)' <<<"${page}" >/dev/null || break
     [[ "${pages}" -lt 20 ]] || { echo "more than 20 pages of merged PRs" >&2; return 1; }
     after="$(jq -r '.data.repository.pullRequests.pageInfo.endCursor' <<<"${page}")"
   done
 
   rm -f "${errf}"
   if [[ "${mode}" == rest ]]; then
-    raw="$(rsc_rest_contexts "${repo}" "${raw}" "${cutoff}")" || return 1
+    raw="$(rsc_rest_contexts "${repo}" "${raw}" "${DAY_START}" "${DAY_END}")" || return 1
   else
     raw="$(rsc_fill_contexts "${owner}" "${name}" "${raw}")" || return 1
   fi
 
   jq --arg ar "${AR_ID}" --arg repo "${repo}" --arg base_ref "${base_ref}" \
-    --argjson window_days "${WINDOW_DAYS}" --arg cutoff "${cutoff}" \
+    --arg day "${DAY_DATE}" --arg day_start "${DAY_START}" --arg day_end "${DAY_END}" \
     --argjson required "${required}" --argjson runs_readable "${runs_readable}" \
     --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson tide "${tide}" --argjson automation "${automation}" '
@@ -238,14 +246,15 @@ collect_repo() {
       generated_at: $generated_at,
       repository: $repo,
       base_ref: $base_ref,
-      window_days: $window_days,
+      covers_date: $day,
+      window: {start: $day_start, end: $day_end},
       branch_protected: $required.protected,
       check_runs_readable: $runs_readable,
       required_contexts: $required.contexts,
       summary: null,
       pull_requests: [
         .[]
-        | select(.mergedAt >= $cutoff)
+        | select(.mergedAt >= $day_start and .mergedAt < $day_end)
         | (.author.login) as $author
         | ([.labels.nodes[].name]) as $labels
         | ([.latestOpinionatedReviews.nodes[]

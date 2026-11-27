@@ -116,8 +116,14 @@ def pr(commit, hours_ago, updated_hours_ago=None):
             "mergeCommit": {"oid": commit}}
 
 
-def collect(fa, fg, days=30, lag=120):
-    return d.collect(fa.aws(), fg.gh(), AR, "example-pipeline", REPO, "main", lag, days, ["us-east-1"], NOW)
+def span(days=30):
+    """A collection window ending at NOW and starting `days` earlier (the collector accepts any half-open window)."""
+    return {"covers_date": "2026-11-23", "start": (NOW - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "end": NOW.strftime("%Y-%m-%dT%H:%M:%SZ")}
+
+
+def collect(fa, fg, days=30, lag=120, day=None):
+    return d.collect(fa.aws(), fg.gh(), AR, "example-pipeline", REPO, "main", lag, day or span(days), ["us-east-1"], NOW)
 
 
 def healthy():
@@ -383,10 +389,12 @@ class WhatIsRecorded(unittest.TestCase):
         self.assertEqual(ev["collection"]["limitations"], d.LIMITATIONS)
         self.assertTrue(any("health" in x for x in d.LIMITATIONS))
 
-    def test_the_allowed_lag_and_window_are_recorded(self):
+    def test_the_allowed_lag_the_day_and_its_window_are_recorded(self):
         ev = collect(*healthy(), lag=45, days=7)
-        self.assertEqual((ev["collection"]["allowed_lag_minutes"], ev["collection"]["window_days"]), (45, 7))
-        self.assertEqual(ev["collection"]["window_start"], "2026-11-17T12:00:00Z")
+        self.assertEqual(ev["collection"]["allowed_lag_minutes"], 45)
+        self.assertEqual(ev["covers_date"], "2026-11-23")
+        self.assertEqual(ev["window"], {"start": "2026-11-17T12:00:00Z", "end": "2026-11-24T12:00:00Z"})
+        self.assertNotIn("window_days", ev["collection"])
 
 
 class OnlyReads(unittest.TestCase):
@@ -418,8 +426,8 @@ class ParallelComparisons(unittest.TestCase):
             executions = [d.normalize_execution(s) for s in fa.pages[0]]
             for e in executions:
                 e["applied"], e["applied_sha"] = (True, sha(9)) if e["status"] == "succeeded" else (None, None)
-            changes, _ = d.read_merged_changes(gh, REPO, "main", NOW - timedelta(days=30))
-            ev = d.build_evidence(AR, "p", REPO, "main", 120, 30, NOW, ["us-east-1"], executions,
+            changes, _ = d.read_merged_changes(gh, REPO, "main", NOW - timedelta(days=30), NOW)
+            ev = d.build_evidence(AR, "p", REPO, "main", 120, span(30), NOW, ["us-east-1"], executions,
                                   d.read_head(gh, REPO, "main"), changes, [], containment)
             results.append(json.dumps(ev, sort_keys=True))
         self.assertEqual(results[0], results[1])
@@ -436,14 +444,48 @@ class ParallelComparisons(unittest.TestCase):
             containment(sha(30), sha(9))
 
 
-class Arguments(unittest.TestCase):
-    def test_window_days_are_validated(self):
-        import argparse
-        self.assertEqual(d.window_days_arg("30"), 30)
-        for bad in ("0", "91", "-1"):
-            with self.assertRaises(argparse.ArgumentTypeError):
-                d.window_days_arg(bad)
+DAY = {"covers_date": "2026-11-23", "start": "2026-11-23T00:00:00Z", "end": "2026-11-24T00:00:00Z"}
 
+
+class OneDay(unittest.TestCase):
+    """The evidence covers one UTC day, [start, end): merges outside it are not in it."""
+
+    def merges(self, *when):
+        prs = [{"mergedAt": w, "updatedAt": w, "mergeCommit": {"oid": sha(10 + i)}} for i, w in enumerate(when)]
+        return FakeGh([prs], head={"sha": sha(1), "date": at(5)})
+
+    def evidence(self, *when):
+        e = [summary("a", "Succeeded", 5, sha(1))]
+        return collect(FakeAws([e], {"a": (True, sha(1))}), self.merges(*when), day=DAY)
+
+    def test_half_open_boundaries(self):
+        ev = self.evidence("2026-11-22T23:59:59Z", "2026-11-23T00:00:00Z", "2026-11-23T23:59:59Z", "2026-11-24T00:00:00Z")
+        self.assertEqual([c["merged_at"] for c in ev["merged_commits"]], ["2026-11-23T00:00:00Z", "2026-11-23T23:59:59Z"])
+
+    def test_a_day_with_no_merge_is_a_complete_empty_collection(self):
+        ev = self.evidence("2026-11-20T10:00:00Z", "2026-11-25T10:00:00Z")
+        self.assertEqual(ev["merged_commits"], [])
+        self.assertTrue(ev["collection"]["complete"])
+
+    def test_the_day_and_its_window_are_in_the_evidence(self):
+        ev = self.evidence()
+        self.assertEqual((ev["covers_date"], ev["window"]), ("2026-11-23", {"start": "2026-11-23T00:00:00Z", "end": "2026-11-24T00:00:00Z"}))
+
+    def test_executions_after_the_day_are_read_so_a_late_merge_can_be_deployed(self):
+        e = [summary("late", "Succeeded", 5, sha(10)), summary("before", "Succeeded", 24 * 5, sha(9))]
+        ev = collect(FakeAws([e], {"late": (True, sha(10)), "before": (True, sha(9))}),
+                     self.merges("2026-11-23T23:30:00Z"), day=DAY)
+        self.assertEqual([c["deployed"] for c in ev["merged_commits"]], [True])
+        self.assertEqual([x["commit"] for x in ev["executions"]], [sha(10)])      # the run before the day is not read in
+
+    def test_the_cli_takes_a_date_and_refuses_a_malformed_one(self):
+        res = subprocess.run([sys.executable, str(ROOT / "evidence/lib/deployment_pipeline.py"), "--ar", AR, "--target", "p",
+                              "--profile", "x", "--region", "us-east-1", "--repository", REPO, "--date", "2026-13-01"],
+                             capture_output=True, text=True)
+        self.assertNotEqual(res.returncode, 0)
+
+
+class Arguments(unittest.TestCase):
     def test_an_empty_branch_means_the_repositorys_default_branch(self):
         self.assertEqual(d.default_branch(FakeGh(default_branch="trunk").gh(), REPO), "trunk")
 

@@ -116,14 +116,6 @@ rules:
       repository and a fine-grained token: use a token or app that can read check runs).
       Either way the PR cannot be judged, which is never read as a pass.
     example: "org/repo: PR #7 merged to main: the status checks on its last commit could not all be read (more contexts than the collector reads, or check runs are not readable for this repository with the current token), so the required checks cannot be judged [rule: merge-review.checks-incomplete]"
-  merge-review.no-merges-found:
-    ar: RSC.CMT.CTRL01.AR02
-    kind: incomplete-evidence
-    title: No merged pull requests in the window, so nothing can be shown
-    fix: >
-      Confirm the collector ran and its token can read pull requests. An empty window cannot
-      demonstrate the requirement, so it is never read as a pass.
-    example: "org/repo: no merged pull requests found against main in the evaluation window, cannot demonstrate the control [rule: merge-review.no-merges-found]"
 
   # --- RSC.CMT.CTRL02.AR01: logging of changes, backed by Prowler ------------
   change-logging.collection-incomplete:
@@ -209,7 +201,7 @@ rules:
     fix: >
       The two sources disagree, so the evidence is inconclusive. Search the other regions and
       the trail's own log files for this key, and explain the gap before relying on the result.
-    example: "central: build-bot key ...ABCD was used in the window per the account, but the audit log shows no events for it [rule: credential-use.log-shows-no-events]"
+    example: "central: build-bot key ...ABCD was used on 2026-11-26 (UTC) per the account, but the audit log shows no events for it [rule: credential-use.log-shows-no-events]"
   credential-use.region-not-searched:
     ar: RSC.IAM.CTRL01.AR02
     kind: incomplete-evidence
@@ -225,7 +217,7 @@ rules:
     fix: >
       Stop using the long-term key: move the workload to short-lived credentials (assume a
       role), then delete the key. The configuration check lists which keys still exist.
-    example: "central: build-bot authenticated with a long-term credential in the last 30 days (at least 50 event(s)) [rule: credential-use.long-term-authentication]"
+    example: "central: build-bot authenticated with a long-term credential on 2026-11-26 (UTC) (at least 50 event(s)) [rule: credential-use.long-term-authentication]"
 
   # --- RSC.CMT.CTRL03.AR01: merged changes are deployed by the pipeline -----
   deployment.collection-incomplete:
@@ -234,7 +226,7 @@ rules:
     title: The deployment history could not be fully read
     fix: >
       Read the reason in the message (a page cap, a record or a comparison that failed). Fix
-      the access, or narrow the window (RSC_WINDOW_DAYS), and re-run. Until then nothing can be
+      the access and re-run (for a past day, `make daily DATE=<day>`). Until then nothing can be
       concluded about whether changes reached this environment.
     example: "example-pipeline: the deployment history could not be fully read (the execution history is longer than 30 pages), so nothing can be concluded [rule: deployment.collection-incomplete]"
   deployment.change-not-deployed:

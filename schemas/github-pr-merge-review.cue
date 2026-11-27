@@ -2,15 +2,22 @@
 // merges to a GitHub repository's default branch, as fetched by
 // evidence/*.sh. Matches tests/fixtures/RSC.CMT.CTRL01.AR02/{pass,fail}.json.
 //
-// window_days/number use `number` rather than `int`: complypack's JSON
-// test-data loader decodes all numbers as float64, so CUE's strict `int`
-// kind rejects them even for whole-valued integers (e.g. 30 becomes a CUE
-// float literal, not an int literal).
+// Numbers use `number` rather than `int`: complypack's JSON test-data loader
+// decodes all numbers as float64, so CUE's strict `int` kind rejects them even
+// for whole-valued integers (e.g. 30 becomes a CUE float literal, not an int literal).
+//
+// The evidence covers ONE UTC day: the pull requests merged in the half-open
+// window [start, end). An empty list for a complete collection is a pass.
 assessment_requirement: string
 generated_at:           string
 repository:             string
 base_ref:               string
-window_days:            number
+// The UTC day the evidence covers (YYYY-MM-DD) and its half-open window, ISO times.
+covers_date: string
+window: {
+	start: string
+	end:   string
+}
 // False when the branch has no protection at all; then no check is required.
 branch_protected: bool
 // The status check contexts the branch protection requires (current configuration).

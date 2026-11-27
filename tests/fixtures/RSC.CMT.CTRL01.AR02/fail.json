@@ -3,7 +3,11 @@
   "generated_at": "2026-10-01T00:00:00Z",
   "repository": "openshift-online/rosa-seaplane",
   "base_ref": "main",
-  "window_days": 30,
+  "covers_date": "2026-09-25",
+  "window": {
+    "start": "2026-09-25T00:00:00Z",
+    "end": "2026-09-26T00:00:00Z"
+  },
   "branch_protected": true,
   "check_runs_readable": true,
   "required_contexts": [
@@ -13,7 +17,7 @@
   "pull_requests": [
     {
       "number": 301,
-      "merged_at": "2026-09-22T12:00:00Z",
+      "merged_at": "2026-09-25T08:00:00Z",
       "author": "alice",
       "author_is_bot": false,
       "automated_change": {
@@ -46,7 +50,7 @@
     },
     {
       "number": 302,
-      "merged_at": "2026-09-23T12:00:00Z",
+      "merged_at": "2026-09-25T09:00:00Z",
       "author": "carol",
       "author_is_bot": false,
       "automated_change": {
@@ -75,7 +79,7 @@
     },
     {
       "number": 303,
-      "merged_at": "2026-09-24T12:00:00Z",
+      "merged_at": "2026-09-25T10:00:00Z",
       "author": "erin",
       "author_is_bot": false,
       "automated_change": {
@@ -141,7 +145,7 @@
     },
     {
       "number": 305,
-      "merged_at": "2026-09-26T12:00:00Z",
+      "merged_at": "2026-09-25T13:00:00Z",
       "author": "dep-bot",
       "author_is_bot": true,
       "automated_change": {

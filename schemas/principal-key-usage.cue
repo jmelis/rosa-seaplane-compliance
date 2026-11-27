@@ -1,5 +1,5 @@
 // Shape of the evidence RSC.IAM.CTRL01.AR02 is evaluated against: whether any
-// principal authenticated with a long-term credential in the window, in one target
+// principal authenticated with a long-term credential on one UTC day, in one target
 // (an AWS account today), as collected by evidence/RSC.IAM.CTRL01.AR02.sh and
 // evidence/lib/iam_key_usage.py. Matches tests/fixtures/RSC.IAM.CTRL01.AR02/.
 //
@@ -13,14 +13,17 @@ generated_at:           string
 // Logical name of the target (e.g. "regional"), never an account ID.
 target:      string
 target_type: string
+// The UTC day the evidence covers (YYYY-MM-DD) and its half-open window, ISO times.
+covers_date: string
+window: {
+	start: string
+	end:   string
+}
 collection: {
 	// False when any lookup failed or was throttled out, so the window was not fully
 	// searched. An incomplete collection must never pass.
 	complete:     bool
 	source:       string
-	window_days:  number
-	window_start: string
-	window_end:   string
 	// The regions that were searched.
 	regions:       [...string]
 	keys_checked:  number

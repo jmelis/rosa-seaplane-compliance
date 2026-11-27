@@ -66,8 +66,12 @@ esac
 """
 
 
-def now():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+# The day collected: three days ago (a backfill, so no settle delay applies), found at run time so the
+# 90-day limit never expires the test data.
+TODAY = datetime.now(timezone.utc).date()
+DAY_DATE = (TODAY - timedelta(days=3)).isoformat()
+DAY_AT = f"{DAY_DATE}T12:00:00Z"
+DAY_BEFORE = f"{(TODAY - timedelta(days=4)).isoformat()}T12:00:00Z"
 
 
 def user(login, bot=False):
@@ -87,7 +91,7 @@ def cr(name, status="COMPLETED", conclusion="SUCCESS"):
 def pr(number, author="alice", author_bot=False, merged_by="openshift-merge-bot", commits=(), labels=(), comments=(), reviews=(), opinionated=(), at=None, truncated=False,
        contexts=(), more_contexts=False, cursor="cur1", oid="oid1", rollup="SUCCESS", no_rollup=False):
     """A GraphQL pull request node. comments/reviews are (login, body[, time]); contexts are sc()/cr()."""
-    t = at or now()
+    t = at or DAY_AT
     return {
         "number": number, "mergedAt": t, "updatedAt": t,
         "author": user(author, author_bot), "mergedBy": {"login": merged_by},
@@ -132,7 +136,7 @@ class Collectors(unittest.TestCase):
     def run_collector(self, ar, repos, extra_env=None):
         env = dict(os.environ, PATH=f"{self.tmp.name}/bin:{os.environ['PATH']}", GITHUB_TOKEN="x",
                    RSC_REPOS=" ".join(repos), RSC_EVIDENCE_DIR=str(self.out), RSC_BASE_REF="main",
-                   RSC_ENV="integration", FAKE_GH_DIR=str(self.fake_dir), **(extra_env or {}))
+                   RSC_ENV="integration", FAKE_GH_DIR=str(self.fake_dir), **{"RSC_DATE": DAY_DATE, **(extra_env or {})})
         return subprocess.run([str(ROOT / "evidence" / f"{ar}.sh")], env=env, capture_output=True, text=True)
 
     def manifest(self, ar):
@@ -181,7 +185,7 @@ class Collectors(unittest.TestCase):
 
     def test_repos_default_to_scope_file(self):
         env = dict(os.environ, PATH=f"{self.tmp.name}/bin:{os.environ['PATH']}", GITHUB_TOKEN="x",
-                   RSC_EVIDENCE_DIR=str(self.out), RSC_BASE_REF="main", FAKE_GH_DIR=str(self.fake_dir))
+                   RSC_EVIDENCE_DIR=str(self.out), RSC_BASE_REF="main", FAKE_GH_DIR=str(self.fake_dir), RSC_DATE=DAY_DATE)
         env.pop("RSC_REPOS", None)
         subprocess.run([str(ROOT / "evidence" / f"{AR2}.sh")], env=env, capture_output=True, text=True)
         names = {t["name"] for t in self.manifest(AR2)["targets"]}
@@ -357,8 +361,8 @@ class Approval(unittest.TestCase):
         self.assertNotIn("review_decision", p)
         self.assertNotIn("secret-ish", json.dumps(p))
 
-    def test_prs_outside_the_window_are_dropped(self):
-        old = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    def test_prs_outside_the_day_are_dropped(self):
+        old = DAY_BEFORE
         c = Collectors("test_one_failing_repo_does_not_stop_the_others")
         c.setUp()
         self.addCleanup(c.tmp.cleanup)
@@ -367,8 +371,8 @@ class Approval(unittest.TestCase):
         prs = json.loads((c.out / AR2 / "ok-x.json").read_text())["pull_requests"]
         self.assertEqual([p["number"] for p in prs], [1])
 
-    def test_pagination_follows_until_the_window_is_covered(self):
-        old = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    def test_pagination_follows_until_the_day_is_covered(self):
+        old = DAY_BEFORE
         c = Collectors("test_one_failing_repo_does_not_stop_the_others")
         c.setUp()
         self.addCleanup(c.tmp.cleanup)
@@ -377,6 +381,65 @@ class Approval(unittest.TestCase):
         c.run_collector(AR2, ["o/ok-x"])
         prs = json.loads((c.out / AR2 / "ok-x.json").read_text())["pull_requests"]
         self.assertEqual([p["number"] for p in prs], [1, 2, 3])
+
+
+class OneDay(unittest.TestCase):
+    """AR02 is an event collector: the evidence holds exactly the PRs merged in [day 00:00:00Z, next day 00:00:00Z)."""
+
+    def collect(self, nodes, has_next=False, extra_env=None, repo="o/ok-x"):
+        c = Collectors("test_one_failing_repo_does_not_stop_the_others")
+        c.setUp()
+        self.addCleanup(c.tmp.cleanup)
+        c.graphql("ok-x", page(nodes, has_next=has_next))
+        res = c.run_collector(AR2, [repo], extra_env)
+        self.c, self.res = c, res
+        f = c.out / AR2 / "ok-x.json"
+        return json.loads(f.read_text()) if f.is_file() else None
+
+    def test_half_open_boundaries(self):
+        nodes = [pr(1, at=f"{(TODAY - timedelta(days=4)).isoformat()}T23:59:59Z"), pr(2, at=f"{DAY_DATE}T00:00:00Z"),
+                 pr(3, at=f"{DAY_DATE}T23:59:59Z"), pr(4, at=f"{(TODAY - timedelta(days=2)).isoformat()}T00:00:00Z")]
+        doc = self.collect(nodes)
+        self.assertEqual([p["number"] for p in doc["pull_requests"]], [2, 3])
+
+    def test_the_day_and_window_are_in_the_evidence_and_the_manifest(self):
+        doc = self.collect([pr(1)])
+        self.assertEqual(doc["covers_date"], DAY_DATE)
+        self.assertEqual(doc["window"], {"start": f"{DAY_DATE}T00:00:00Z", "end": f"{(TODAY - timedelta(days=2)).isoformat()}T00:00:00Z"})
+        self.assertNotIn("window_days", doc)
+        self.assertEqual(self.c.manifest(AR2)["covers_date"], DAY_DATE)
+
+    def test_a_day_with_no_merge_is_a_complete_empty_collection(self):
+        doc = self.collect([pr(1, at=DAY_BEFORE)])
+        self.assertEqual(doc["pull_requests"], [])
+        self.assertEqual(doc["summary"]["merged"], 0)
+        self.assertEqual(self.c.manifest(AR2)["targets"][0]["status"], "collected")
+
+    def test_a_repository_that_cannot_be_read_is_not_an_empty_day(self):
+        doc = self.collect([], repo="o/denied-x")
+        self.assertIsNone(doc)
+        self.assertEqual(self.c.manifest(AR2)["targets"][0]["status"], "error")
+
+    def test_reading_down_to_the_day_is_capped_and_a_capped_read_is_an_error_not_an_empty_day(self):
+        nodes = [pr(1, at=f"{(TODAY - timedelta(days=1)).isoformat()}T12:00:00Z")]
+        c = Collectors("test_one_failing_repo_does_not_stop_the_others")
+        c.setUp()
+        self.addCleanup(c.tmp.cleanup)
+        for name in ["ok-x"] + [f"ok-x.{i}" for i in range(2, 3)]:
+            c.graphql(name, page(nodes, has_next=True))
+        # the fake serves the same page for every cursor, always newer than the day: the cap is reached
+        c.run_collector(AR2, ["o/ok-x"])
+        self.assertEqual(c.manifest(AR2)["targets"][0]["status"], "error")
+        self.assertFalse((c.out / AR2 / "ok-x.json").exists())
+
+    def test_a_bad_date_fails_before_anything_is_collected(self):
+        for bad in (TODAY.isoformat(), "2026-02-30", "last tuesday"):
+            c = Collectors("test_one_failing_repo_does_not_stop_the_others")
+            c.setUp()
+            self.addCleanup(c.tmp.cleanup)
+            res = c.run_collector(AR2, ["o/ok-a"], {"RSC_DATE": bad})
+            self.assertNotEqual(res.returncode, 0, bad)
+            self.assertFalse((c.out / AR2 / "manifest.json").exists())
 
 
 if __name__ == "__main__":
@@ -612,8 +675,8 @@ class PrivateRepositoryChecks(unittest.TestCase):
         self.assertIsNone(doc)
         self.assertEqual(json.loads((self.c.out / AR2 / "manifest.json").read_text())["targets"][0]["status"], "error")
 
-    def test_only_in_window_prs_are_looked_up(self):
-        old = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    def test_only_prs_merged_on_the_day_are_looked_up(self):
+        old = DAY_BEFORE
         doc = self.collect([pr(1, oid="o1"), pr(2, oid="o-old", at=old)],
                            {"o1": status_body([("ci/prow/a", "success"), ("ci/prow/b", "success")])})
         self.assertEqual([p["number"] for p in doc["pull_requests"]], [1])

@@ -24,6 +24,8 @@ compliant_pr := {
 
 base := {
 	"assessment_requirement": "RSC.CMT.CTRL01.AR02",
+	"covers_date": "2026-09-06",
+	"window": {"start": "2026-09-06T00:00:00Z", "end": "2026-09-07T00:00:00Z"},
 	"repository": "openshift-online/example",
 	"base_ref": "main",
 }
@@ -140,10 +142,8 @@ test_evidence_without_the_completeness_flag_is_not_a_pass if {
 	contains(msg, "could not all be read")
 }
 
-test_empty_window_is_denied if {
-	violations := deny with input as {"assessment_requirement": "RSC.CMT.CTRL01.AR02", "repository": "openshift-online/example", "base_ref": "main", "pull_requests": []}
-	some msg in violations
-	contains(msg, "no merged pull requests found")
+test_a_day_without_merges_passes if {
+	count(deny) == 0 with input as {"assessment_requirement": "RSC.CMT.CTRL01.AR02", "repository": "openshift-online/example", "base_ref": "main", "covers_date": "2026-09-06", "window": {"start": "2026-09-06T00:00:00Z", "end": "2026-09-07T00:00:00Z"}, "pull_requests": []}
 }
 
 test_ignores_other_ars_evidence if {
@@ -156,12 +156,8 @@ test_ignores_other_ars_evidence if {
 }
 
 test_deny_message_names_repo if {
-	violations := deny with input as {
-		"assessment_requirement": "RSC.CMT.CTRL01.AR02",
-		"repository": "openshift-online/example",
-		"base_ref": "main",
-		"pull_requests": [],
-	}
+	pr := object.union(compliant_pr, {"approved_by": [], "approval_sources": []})
+	violations := deny with input as object.union(base, {"pull_requests": [pr]})
 	some msg in violations
 	contains(msg, "openshift-online/example")
 }

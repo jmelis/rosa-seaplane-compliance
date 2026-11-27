@@ -20,8 +20,10 @@ clean := {
 	"assessment_requirement": "RSC.IAM.CTRL01.AR02",
 	"target": "regional",
 	"target_type": "aws-account",
+	"covers_date": "2026-11-26",
+	"window": {"start": "2026-11-26T00:00:00Z", "end": "2026-11-27T00:00:00Z"},
 	"collection": {
-		"complete": true, "source": "cloudtrail-event-history+iam-last-used", "window_days": 30,
+		"complete": true, "source": "cloudtrail-event-history+iam-last-used",
 		"regions": ["us-east-1"], "keys_checked": 1, "lookup_errors": 0, "limitations": [],
 	},
 	"keys": [key({})],

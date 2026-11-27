@@ -32,6 +32,8 @@ healthy := {
 	"assessment_requirement": "RSC.CMT.CTRL03.AR01",
 	"target": "example-pipeline",
 	"branch": "main",
+	"covers_date": "2026-11-24",
+	"window": {"start": "2026-11-24T00:00:00Z", "end": "2026-11-25T00:00:00Z"},
 	"collection": {
 		"complete": true,
 		"allowed_lag_minutes": 120,
@@ -200,6 +202,22 @@ test_a_failed_run_that_claims_to_be_applied_is_a_contradiction if {
 test_a_succeeded_run_with_no_record_at_all_is_not_a_contradiction if {
 	e := object.union(execution(head_sha, "succeeded", "2026-11-24T09:01:00Z"), {"applied": null, "applied_sha": null})
 	count(deny) == 0 with input as object.union(healthy, {"executions": [e]})
+}
+
+test_a_contradicting_run_after_the_day_is_left_to_that_day if {
+	e := object.union(execution(head_sha, "succeeded", "2026-11-25T09:01:00Z"), {"applied": false})
+	count(deny) == 0 with input as object.union(healthy, {"executions": [e]})
+}
+
+test_a_day_with_no_merges_passes if {
+	count(deny) == 0 with input as object.union(healthy, {"merged_commits": []})
+}
+
+test_evidence_without_a_window_is_judged_whole if {
+	e := object.union(execution(head_sha, "succeeded", "2026-11-25T09:01:00Z"), {"applied": false})
+	violations := deny with input as object.union(object.remove(healthy, ["window"]), {"executions": [e]})
+	some msg in violations
+	contains(msg, "[rule: deployment.record-contradicts-status]")
 }
 
 test_ignores_other_ars_evidence if {

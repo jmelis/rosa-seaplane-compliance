@@ -17,15 +17,18 @@ target:      string
 target_type: string
 repository:  string
 branch:      string
+// The UTC day the evidence covers (YYYY-MM-DD) and its half-open window, ISO times.
+covers_date: string
+window: {
+	start: string
+	end:   string
+}
 collection: {
 	// False when the window was not fully covered (history that does not reach back, a
 	// page cap, an applied record or a comparison that failed). An incomplete
 	// collection must never pass.
 	complete:             bool
 	source:               string
-	window_days:          number
-	window_start:         string
-	window_end:           string
 	allowed_lag_minutes:  number
 	regions:              [...string]
 	executions_read:      number

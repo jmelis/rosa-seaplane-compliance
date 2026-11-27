@@ -74,8 +74,17 @@ class FakeAws:
         return [c for c in self.calls if "lookup-events" in c]
 
 
-def collect(fake, regions=("us-east-1",), days=30, **kw):
-    return k.collect(fake.aws(**kw), "RSC.IAM.CTRL01.AR02", "regional", days, list(regions), NOW)
+def span(days=30):
+    """A collection window ending at NOW and starting `days` earlier (the collector accepts any half-open window)."""
+    return {"covers_date": "2026-11-23", "start": (NOW - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "end": NOW.strftime("%Y-%m-%dT%H:%M:%SZ")}
+
+
+DAY = {"covers_date": "2026-11-23", "start": "2026-11-23T00:00:00Z", "end": "2026-11-24T00:00:00Z"}
+
+
+def collect(fake, regions=("us-east-1",), days=30, day=None, **kw):
+    return k.collect(fake.aws(**kw), "RSC.IAM.CTRL01.AR02", "regional", day or span(days), list(regions), NOW)
 
 
 class Discovery(unittest.TestCase):
@@ -185,7 +194,7 @@ class Lookups(unittest.TestCase):
         slept = []
         f = FakeAws(users=["svc"], keys={"svc": [(KEY_A, "Active")]}, events={KEY_A: [[], []]})
         aws = k.Aws("p", interval=10, retries=0, backoff=0, run=f.run, sleep=slept.append)
-        k.collect(aws, "ar", "t", 30, ["us-east-1"], NOW)
+        k.collect(aws, "ar", "t", span(30), ["us-east-1"], NOW)
         self.assertTrue(slept and all(0 < s <= 10 for s in slept))
 
 
@@ -228,6 +237,57 @@ class CrossCheck(unittest.TestCase):
         self.assertFalse(ev["keys"][0]["cross_checked"])
 
 
+class OneDay(unittest.TestCase):
+    """The evidence covers one UTC day, [start, end): CloudTrail's inclusive end time must not leak the next day in."""
+
+    def run_day(self, events, last=None, keys=True):
+        f = FakeAws(users=["svc"] if keys else [], keys={"svc": [(KEY_A, "Active")]} if keys else {},
+                    last_used={KEY_A: last or {}}, events={KEY_A: [events]})
+        return f, collect(f, day=DAY)
+
+    def test_the_day_and_its_window_are_in_the_evidence_not_a_number_of_days(self):
+        _, ev = self.run_day([])
+        self.assertEqual((ev["covers_date"], ev["window"]), ("2026-11-23", {"start": "2026-11-23T00:00:00Z", "end": "2026-11-24T00:00:00Z"}))
+        self.assertNotIn("window_days", ev["collection"])
+
+    def test_lookup_is_asked_for_exactly_the_day(self):
+        f, _ = self.run_day([])
+        self.assertIn("--start-time 2026-11-23T00:00:00Z --end-time 2026-11-24T00:00:00Z", " ".join(f.lookups()[0]))
+
+    def test_half_open_boundaries_start_is_in_end_is_out(self):
+        events = [trail_event(when="2026-11-22T23:59:59+00:00"), trail_event(when="2026-11-23T00:00:00+00:00"),
+                  trail_event(when="2026-11-23T23:59:59+00:00"), trail_event(when="2026-11-24T00:00:00+00:00")]
+        _, ev = self.run_day(events)
+        self.assertEqual(sorted(e["time"] for e in ev["events"]), ["2026-11-23T00:00:00Z", "2026-11-23T23:59:59Z"])
+        self.assertEqual(ev["keys"][0]["events_found"], 2)
+
+    def test_an_event_exactly_at_the_end_alone_is_a_quiet_day(self):
+        _, ev = self.run_day([trail_event(when="2026-11-24T00:00:00+00:00")])
+        self.assertEqual((ev["keys"][0]["events_found"], ev["events"], ev["collection"]["complete"]), (0, [], True))
+
+    def test_a_day_with_no_keys_is_a_complete_empty_collection(self):
+        _, ev = self.run_day([], keys=False)
+        self.assertEqual((ev["keys"], ev["events"], ev["collection"]["complete"]), ([], [], True))
+
+    def test_a_last_use_after_the_day_cannot_contradict_an_empty_day(self):
+        _, ev = self.run_day([], last={"LastUsedDate": "2026-11-24T08:00:00+00:00", "Region": "us-east-1"})
+        self.assertEqual((ev["keys"][0]["last_used"], ev["keys"][0]["last_used_in_window"]), ("2026-11-24T08:00:00Z", False))
+
+    def test_a_last_use_before_the_day_cannot_contradict_it_either(self):
+        _, ev = self.run_day([], last={"LastUsedDate": "2026-11-22T23:59:59+00:00", "Region": "us-east-1"})
+        self.assertFalse(ev["keys"][0]["last_used_in_window"])
+
+    def test_a_last_use_inside_the_day_with_no_events_is_surfaced(self):
+        _, ev = self.run_day([], last={"LastUsedDate": "2026-11-23T00:00:00+00:00", "Region": "us-east-1"})
+        self.assertEqual((ev["keys"][0]["last_used_in_window"], ev["keys"][0]["events_found"]), (True, 0))
+
+    def test_the_limits_of_a_past_day_are_stated(self):
+        _, ev = self.run_day([])
+        text = " ".join(ev["collection"]["limitations"])
+        self.assertIn("exist when the collector runs", text)
+        self.assertIn("most recent use", text)
+
+
 class Normalization(unittest.TestCase):
     def one(self, **kw):
         f = FakeAws(users=["svc"], keys={"svc": [(KEY_A, "Active")]}, events={KEY_A: [[trail_event(**kw)]]})
@@ -264,12 +324,10 @@ class Normalization(unittest.TestCase):
 
 
 class Cli(unittest.TestCase):
-    def test_window_must_be_within_what_event_history_keeps(self):
-        import argparse
-        self.assertEqual(k.window_days_arg("90"), 90)
-        for bad in ("0", "91", "-1"):
-            with self.assertRaises(argparse.ArgumentTypeError):
-                k.window_days_arg(bad)
+    def test_the_cli_refuses_a_malformed_date(self):
+        res = subprocess.run([sys.executable, str(ROOT / "evidence/lib/iam_key_usage.py"), "--ar", "x", "--target", "t",
+                              "--profile", "p", "--date", "yesterday"], capture_output=True, text=True)
+        self.assertNotEqual(res.returncode, 0)
 
     def test_output_is_valid_json_for_the_schema_fields(self):
         ev = collect(FakeAws(users=["svc"], keys={"svc": [(KEY_A, "Active")]}))

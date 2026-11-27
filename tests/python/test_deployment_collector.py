@@ -55,19 +55,25 @@ else:
 '''
 
 
-def stamp(hours_ago):
-    return (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+# The day collected: three days ago (a backfill, so no settle delay applies), found at run time so the
+# 90-day limit never expires the test data.
+TODAY = datetime.now(timezone.utc).date()
+DAY_DATE = (TODAY - timedelta(days=3)).isoformat()
 
 
-def run_summary(eid, status, hours_ago, commit):
-    return {"pipelineExecutionId": eid, "status": status, "startTime": stamp(hours_ago), "lastUpdateTime": stamp(hours_ago - 0.1),
+def stamp(clock, day=DAY_DATE):
+    return f"{day}T{clock}+00:00"
+
+
+def run_summary(eid, status, clock, commit):
+    return {"pipelineExecutionId": eid, "status": status, "startTime": stamp(clock), "lastUpdateTime": stamp(clock),
             "trigger": {"triggerType": "WebhookV2"}, "sourceRevisions": [{"revisionId": commit}]}
 
 
-GOOD_ACCOUNT = {"executions": {p: [run_summary("e-" + p, "Succeeded", 3, HEAD)] for p in PIPELINES},
+GOOD_ACCOUNT = {"executions": {p: [run_summary("e-" + p, "Succeeded", "10:01:00", HEAD)] for p in PIPELINES},
                 "outputs": {"e-" + p: [True, HEAD] for p in PIPELINES}}
-GOOD_GH = {"prs": [{"mergedAt": stamp(3.2), "updatedAt": stamp(3.2), "mergeCommit": {"oid": HEAD}}],
-           "head": {"sha": HEAD, "date": stamp(3.2)}}
+GOOD_GH = {"prs": [{"mergedAt": stamp("10:00:00"), "updatedAt": stamp("10:00:00"), "mergeCommit": {"oid": HEAD}}],
+           "head": {"sha": HEAD, "date": stamp("10:00:00")}}
 
 
 class DeploymentCollector(unittest.TestCase):
@@ -92,6 +98,7 @@ class DeploymentCollector(unittest.TestCase):
         (self.fake / "gh.json").write_text(json.dumps(cfg))
 
     def run_collector(self, token="x", **extra):
+        extra = {"RSC_DATE": DAY_DATE, **extra}
         env = dict(os.environ, PATH=f"{self.tmp.name}/bin:{os.environ['PATH']}", FAKE_AWS_DIR=str(self.fake),
                    FAKE_GH_DIR=str(self.fake), RSC_AWS_READY="1", RSC_ENV="integration", RSC_EVIDENCE_DIR=str(self.out),
                    RSC_LOOKUP_INTERVAL="0", RSC_PIPELINE_INTERVAL="0", RSC_LOOKUP_BACKOFF="0", **extra)
@@ -131,7 +138,7 @@ class DeploymentCollector(unittest.TestCase):
         self.assertNotEqual(self.run_collector().returncode, 0)
 
     def test_an_undeployed_head_is_recorded_for_the_policy_to_judge(self):
-        broken = dict(GOOD_ACCOUNT, executions={p: [run_summary("f-" + p, "Failed", 3, HEAD)] for p in PIPELINES},
+        broken = dict(GOOD_ACCOUNT, executions={p: [run_summary("f-" + p, "Failed", "10:01:00", HEAD)] for p in PIPELINES},
                       outputs={})
         self.account(broken)
         self.run_collector()
@@ -158,10 +165,39 @@ class DeploymentCollector(unittest.TestCase):
         self.assertTrue(any(l.startswith("repos/openshift-online/rosa-seaplane --jq") for l in (self.fake / "gh-calls.log").read_text().splitlines()))
         self.assertEqual(self.evidence("regional-pipeline")["branch"], "main")
 
-    def test_window_days_is_honoured_and_validated(self):
-        self.run_collector(RSC_WINDOW_DAYS="7")
-        self.assertEqual(self.evidence("regional-pipeline")["collection"]["window_days"], 7)
-        self.assertNotEqual(self.run_collector(RSC_WINDOW_DAYS="120").returncode, 0)
+    def test_the_day_is_recorded_in_the_evidence_and_the_manifest(self):
+        self.run_collector()
+        ev = self.evidence("regional-pipeline")
+        self.assertEqual((ev["covers_date"], ev["window"]), (DAY_DATE, {"start": f"{DAY_DATE}T00:00:00Z",
+                                                                       "end": f"{(TODAY - timedelta(days=2)).isoformat()}T00:00:00Z"}))
+        self.assertEqual([c["merged_at"] for c in ev["merged_commits"]], [f"{DAY_DATE}T10:00:00Z"])
+        self.assertEqual(json.loads((self.out / AR / "manifest.json").read_text())["covers_date"], DAY_DATE)
+
+    def test_a_merge_on_another_day_is_not_in_this_days_evidence(self):
+        other = (TODAY - timedelta(days=4)).isoformat()
+        self.gh(dict(GOOD_GH, prs=[{"mergedAt": stamp("23:59:59", other), "updatedAt": stamp("23:59:59", other), "mergeCommit": {"oid": HEAD}}]))
+        self.run_collector()
+        self.assertEqual(self.evidence("regional-pipeline")["merged_commits"], [])
+
+    def test_the_default_day_is_yesterday(self):
+        res = self.run_collector(RSC_DATE="", RSC_ALLOW_EARLY="1")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(self.evidence("regional-pipeline")["covers_date"], (TODAY - timedelta(days=1)).isoformat())
+
+    def test_a_day_that_is_not_collectable_fails_before_anything_is_called(self):
+        for bad in (TODAY.isoformat(), (TODAY + timedelta(days=1)).isoformat(), "2026-13-45", "yesterday",
+                    (TODAY - timedelta(days=91)).isoformat()):
+            res = self.run_collector(RSC_DATE=bad)
+            self.assertNotEqual(res.returncode, 0, bad)
+            self.assertIn("ERROR", res.stderr)
+        self.assertFalse((self.fake / "aws-calls.log").exists())
+
+    def test_an_early_run_is_refused_unless_allowed(self):
+        yesterday = (TODAY - timedelta(days=1)).isoformat()
+        res = self.run_collector(RSC_DATE=yesterday, RSC_SETTLE_MINUTES="100000")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("RSC_ALLOW_EARLY", res.stderr)
+        self.assertEqual(self.run_collector(RSC_DATE=yesterday, RSC_SETTLE_MINUTES="100000", RSC_ALLOW_EARLY="1").returncode, 0)
 
     def test_nothing_sensitive_reaches_the_evidence_files(self):
         self.run_collector()

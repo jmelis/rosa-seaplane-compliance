@@ -7,10 +7,11 @@ set -euo pipefail
 # integration; the pipelines and their account are listed under `deployment:` in
 # config/environments/<env>.yaml), plus a manifest; see evidence/lib/collect.sh and aws.sh.
 #
-# Evidence per pipeline: whether every change merged to the deployed branch in the window
-# (RSC_WINDOW_DAYS, default 30, at most 90) was applied by a successful run, and whether
-# the head is deployed. See lib/deployment_pipeline.py for the method and its limits, and
-# schemas/deployment-pipeline.cue. Read-only: the pipeline's account is read through its
+# EVENT collector for ONE UTC day (RSC_DATE, default yesterday; see lib/day_window.py).
+# Evidence per pipeline: whether every change merged to the deployed branch on that day was
+# applied by a successful run, and whether the head is deployed (the head and the latest run
+# are the present, so a backfill does not judge them). A day with no merge passes. See
+# lib/deployment_pipeline.py for the method and its limits, and schemas/deployment-pipeline.cue. Read-only: the pipeline's account is read through its
 # read-only profile (never an admin profile), the repository through gh.
 
 AR_ID="$(basename "$0" .sh)"
@@ -24,6 +25,7 @@ if [[ -z "${GITHUB_TOKEN:-}" ]]; then
   exit 1
 fi
 
+rsc_day_window || exit 1
 rsc_aws_reexec "$0"
 
 # The deployment pipelines of the environment. An environment without a deployment block
@@ -42,7 +44,7 @@ collect_target() {
     --region "$(rsc_aws_regions | cut -d, -f1)" \
     --repository "$(jq -r .repository <<<"${dep}")" --branch "$(jq -r '.branch // ""' <<<"${dep}")" \
     --lag-minutes "$(jq -r .allowed_lag_minutes <<<"${dep}")" \
-    --window-days "${RSC_WINDOW_DAYS:-30}" >"${out}" || return 1
+    --date "${DAY_DATE}" >"${out}" || return 1
 }
 
 rsc_collect_all

@@ -1,6 +1,6 @@
 # RSC.IAM.CTRL01.AR02: no non-human principal in an in-scope target may have
-# authenticated with a long-term credential in the evaluation window, as far as the
-# target's audit log records. Input: the JSON from evidence/RSC.IAM.CTRL01.AR02.sh.
+# authenticated with a long-term credential on the UTC day the evidence covers, as far as
+# the target's audit log records. Input: the JSON from evidence/RSC.IAM.CTRL01.AR02.sh.
 # Package name must match the "id" in complytime-mapping.json.
 #
 # Source-neutral: it reads normalized events (credential_type, principal) and
@@ -8,11 +8,11 @@
 # shape. Three things are denied:
 #   - an incomplete collection (a lookup failed or was throttled out), so a window
 #     that was not fully searched can never pass;
-#   - a key whose cross-check is inconsistent (the source says it was used in the
-#     window but the audit log shows nothing, or it was used where nothing was
+#   - a key whose cross-check is inconsistent (the source says it was used on the
+#     day but the audit log shows nothing, or it was used where nothing was
 #     searched): the evidence is suspect, and suspect is not a pass;
 #   - every principal that authenticated with a long-term credential.
-# Zero events from a complete, consistent collection is a pass. The collector cannot
+# Zero events from a complete, consistent collection (a quiet day) is a pass. The collector cannot
 # always tell people from services, so every principal is reported.
 #
 # The opa provider evaluates every mapped package against every file in the
@@ -36,7 +36,7 @@ with_rule(id, text) := sprintf("%s [rule: %s]", [text, id])
 # (a rule whose message cannot be formatted would silently produce none).
 lookup_errors := input.collection.lookup_errors if is_number(input.collection.lookup_errors) else := 0
 
-window_days := input.collection.window_days if is_number(input.collection.window_days) else := 0
+covers_date := input.covers_date if is_string(input.covers_date) else := "(unknown day)"
 
 deny contains msg if {
 	applies
@@ -47,7 +47,7 @@ deny contains msg if {
 	))
 }
 
-# The source says the key was used in the window, but nothing in the audit log
+# The source says the key was used on the day, but nothing in the audit log
 # accounts for it. It may only have been used for calls that event history does not
 # record (data-plane calls), so use cannot be ruled in or out.
 deny contains msg if {
@@ -57,8 +57,8 @@ deny contains msg if {
 	key.last_used_in_window == true
 	key.events_found == 0
 	msg := with_rule("credential-use.log-shows-no-events", sprintf(
-		"%s: %s key ...%s was used in the window per the account, but the audit log shows no events for it (it may have been used only for calls the audit log does not record)",
-		[input.target, key.principal, key.key_suffix],
+		"%s: %s key ...%s was used on %s (UTC) per the account, but the audit log shows no events for it (it may have been used only for calls the audit log does not record)",
+		[input.target, key.principal, key.key_suffix, covers_date],
 	))
 }
 
@@ -83,8 +83,8 @@ deny contains msg if {
 	seen := sum([k.events_found | some k in input.keys; k.principal == principal])
 	more := count([k | some k in input.keys; k.principal == principal; k.events_truncated == true]) > 0
 	msg := with_rule("credential-use.long-term-authentication", sprintf(
-		"%s: %s authenticated with a long-term credential in the last %d days (%s%d event(s))",
-		[input.target, principal, window_days, at_least(more), seen],
+		"%s: %s authenticated with a long-term credential on %s (UTC) (%s%d event(s))",
+		[input.target, principal, covers_date, at_least(more), seen],
 	))
 }
 

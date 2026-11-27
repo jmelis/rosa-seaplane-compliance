@@ -7,6 +7,12 @@
 # The opa provider evaluates every mapped package against every file in the
 # target's input_path, so each rule is guarded on the evidence's own
 # assessment_requirement (see github_default_branch_protection.rego).
+#
+# The evidence covers ONE UTC day. A day with no merge has an empty pull_requests list,
+# and that is a pass: nothing happened that needed review. What stops a silent gap from
+# passing is the collection itself (the repository must be reached, the pages read down
+# to the day, nothing capped); a collection that fails writes no evidence, so the AR is
+# reported as an error, never as a pass.
 
 # platform: github-pr-merge-review
 # schema: schemas/github-pr-merge-review.cue
@@ -109,15 +115,5 @@ deny contains msg if {
 	msg := with_rule("merge-review.checks-incomplete", sprintf(
 		"%s: PR #%d merged to %s: the status checks on its last commit could not all be read (more contexts than the collector reads, or check runs are not readable for this repository with the current token), so the required checks cannot be judged",
 		[input.repository, pr.number, input.base_ref],
-	))
-}
-
-# Empty pull_requests would otherwise vacuously "pass" every rule above.
-deny contains msg if {
-	applies
-	count(input.pull_requests) == 0
-	msg := with_rule("merge-review.no-merges-found", sprintf(
-		"%s: no merged pull requests found against %s in the evaluation window, cannot demonstrate the control; verify evidence/RSC.CMT.CTRL01.AR02.sh ran successfully and GITHUB_TOKEN has read access",
-		[input.repository, input.base_ref],
 	))
 }

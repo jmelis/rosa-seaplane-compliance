@@ -2,9 +2,10 @@
 """Collect long-term-credential usage evidence for one AWS account.
 
     iam_key_usage.py --ar <AR id> --target <logical account> --profile <read-only profile>
-                     [--window-days 30] [--regions us-east-1,...]
+                     --date YYYY-MM-DD [--regions us-east-1,...]
 
-Answers "did any principal authenticate with a long-term credential in the window?"
+EVENT collector for ONE UTC day, the half-open [D 00:00:00Z, D+1 00:00:00Z) (lib/day_window.py).
+Answers "did any principal authenticate with a long-term credential on that day?"
 without scanning the whole audit log (CloudTrail's LookupEvents returns 50 events per
 call at 2 calls per second per account and region, one filter at a time, so a full
 scan of a busy account takes hours). Instead it asks for the events of each EXISTING
@@ -13,10 +14,14 @@ long-term key:
   1. list the IAM users and their access keys (active and inactive: an inactive key
      may have been active earlier in the window);
   2. for each key, look up CloudTrail events by access key, newest first, bounded to
-     the window. One page with events already proves the key was used, so it stops
-     there; a key with no events is paged until the window is exhausted;
-  3. cross-check each key with IAM's own last-used record. If IAM says a key was used
-     in the window but CloudTrail has no event for it (for example it was only used
+     the day. One page with events already proves the key was used, so it stops
+     there; a key with no events is paged until the day is exhausted. CloudTrail's end time
+     is inclusive, so an event at exactly the end of the day is dropped (it belongs to the
+     next day);
+  3. cross-check each key with IAM's own last-used record. IAM keeps only the MOST RECENT
+     use of a key, so it can contradict an empty day only when that use fell inside the day
+     (a later use says nothing about the day). If IAM says a key was used on the day but
+     CloudTrail has no event for it (for example it was only used
      for data-plane calls, which event history does not record), or it was last used
      in a region that was not searched, that is reported as a fact the policy denies:
      the evidence is suspect and is never read as a pass;
@@ -27,8 +32,9 @@ normalized (schemas/principal-key-usage.cue) and holds only a bounded sample of
 trimmed events per key: never source IPs, user agents, request parameters or full key
 ids (only the last four characters).
 
-Limits it cannot get around, recorded in collection.limitations: keys deleted inside
-the window cannot be listed so they are not checked; only management events of the
+Limits it cannot get around, recorded in collection.limitations: the keys are those that
+exist when the collector runs (state, not the day's: for a past day, a key deleted since is
+not checked); a day with no key at all is a complete, empty collection and passes; only management events of the
 last 90 days are searched; sessions are not followed past the call made with the key.
 
 Any lookup that fails or is throttled out makes collection.complete false, which the
@@ -41,17 +47,18 @@ import re
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from aws_cli import ID_RE, THROTTLE_RE, Aws, AwsError, mask, utc_iso  # noqa: F401  (the shared aws CLI wrapper)
+from day_window import DayError, day_for
 
-MAX_WINDOW_DAYS = 90
 SAMPLE_PER_KEY = 20
 ROOT_PAGE_CAP = 40
 HOME_REGION = "us-east-1"
 SOURCE = "cloudtrail-event-history+iam-last-used"
 LIMITATIONS = [
-    "access keys deleted inside the window cannot be listed, so they are not checked",
+    "the keys checked are those that exist when the collector runs, so a key deleted since the covered day cannot be listed and is not checked",
+    "IAM records only the most recent use of a key, so its last-used time can contradict an empty day only when that use fell inside the day",
     "only management events in CloudTrail event history (the last 90 days) are searched; data-plane calls are not",
     "a session started with a key is seen only as the call made with the key, not followed afterwards",
 ]
@@ -105,12 +112,17 @@ def lookup_args(attribute: str, value: str, region: str, start: datetime, end: d
     return args + (["--next-token", token] if token else [])
 
 
+def in_day(event: dict, start: datetime, end: datetime) -> bool:
+    """CloudTrail's end time is inclusive: keep only events in the half-open [start, end)."""
+    return start <= datetime.fromisoformat(utc_iso(event["EventTime"]).replace("Z", "+00:00")) < end
+
+
 def lookup_key(aws: Aws, key_id: str, region: str, start: datetime, end: datetime):
     """(sample, events_seen, truncated) for one key in one region. Stops at the first events."""
     sample, seen, token = [], 0, None
     while True:
         page = aws.call(*lookup_args("AccessKeyId", key_id, region, start, end, token), region=region)
-        batch = page.get("Events") or []
+        batch = [e for e in page.get("Events") or [] if in_day(e, start, end)]
         seen += len(batch)
         for e in batch:
             if len(sample) < SAMPLE_PER_KEY:
@@ -130,6 +142,8 @@ def lookup_root(aws: Aws, region: str, start: datetime, end: datetime):
         page = aws.call(*lookup_args("Username", "root", region, start, end, token), region=region)
         pages += 1
         for e in page.get("Events") or []:
+            if not in_day(e, start, end):
+                continue
             n = normalize_event(e, region)
             if n["credential_type"] == "long-term":
                 found += 1
@@ -163,9 +177,10 @@ def root_has_keys(aws: Aws) -> bool:
         raise CollectionError(f"could not read the account summary: {e}") from None
 
 
-def collect(aws: Aws, ar: str, target: str, window_days: int, regions: list, now: datetime = None) -> dict:
+def collect(aws: Aws, ar: str, target: str, day: dict, regions: list, now: datetime = None) -> dict:
     now = now or datetime.now(timezone.utc)
-    start = now - timedelta(days=window_days)
+    start = datetime.fromisoformat(day["start"].replace("Z", "+00:00"))
+    end = datetime.fromisoformat(day["end"].replace("Z", "+00:00"))
     regions = [HOME_REGION] + [r for r in regions if r != HOME_REGION]
     inventory = list_keys(aws)
     root = root_has_keys(aws)
@@ -180,7 +195,7 @@ def collect(aws: Aws, ar: str, target: str, window_days: int, regions: list, now
             rec["cross_checked"] = True
             if used.get("LastUsedDate"):
                 rec["last_used"] = utc_iso(used["LastUsedDate"])
-                rec["last_used_in_window"] = datetime.fromisoformat(rec["last_used"].replace("Z", "+00:00")) >= start
+                rec["last_used_in_window"] = start <= datetime.fromisoformat(rec["last_used"].replace("Z", "+00:00")) < end
                 region = used.get("Region")
                 rec["last_used_region"] = region if region and region != "N/A" else None
                 rec["last_used_region_checked"] = rec["last_used_region"] is None or rec["last_used_region"] in regions
@@ -188,7 +203,7 @@ def collect(aws: Aws, ar: str, target: str, window_days: int, regions: list, now
             errors += 1
         for region in regions:
             try:
-                sample, seen, truncated = lookup_key(aws, k["key_id"], region, start, now)
+                sample, seen, truncated = lookup_key(aws, k["key_id"], region, start, end)
             except AwsError:
                 errors += 1
                 continue
@@ -205,7 +220,7 @@ def collect(aws: Aws, ar: str, target: str, window_days: int, regions: list, now
                "cross_checked": False, "events_found": 0, "events_truncated": False}
         for region in regions:
             try:
-                sample, found, resolved = lookup_root(aws, region, start, now)
+                sample, found, resolved = lookup_root(aws, region, start, end)
             except AwsError:
                 errors += 1
                 continue
@@ -223,9 +238,10 @@ def collect(aws: Aws, ar: str, target: str, window_days: int, regions: list, now
         "generated_at": stamp,
         "target": target,
         "target_type": "aws-account",
+        "covers_date": day["covers_date"],
+        "window": {"start": day["start"], "end": day["end"]},
         "collection": {
-            "complete": errors == 0, "source": SOURCE, "window_days": window_days,
-            "window_start": utc_iso(start.timestamp()), "window_end": stamp, "regions": regions,
+            "complete": errors == 0, "source": SOURCE, "regions": regions,
             "keys_checked": len(keys), "lookup_errors": errors, "limitations": LIMITATIONS, "generated_at": stamp,
         },
         "keys": keys,
@@ -233,25 +249,18 @@ def collect(aws: Aws, ar: str, target: str, window_days: int, regions: list, now
     }
 
 
-def window_days_arg(value: str) -> int:
-    n = int(value)
-    if not 1 <= n <= MAX_WINDOW_DAYS:
-        raise argparse.ArgumentTypeError(f"must be between 1 and {MAX_WINDOW_DAYS} (CloudTrail event history keeps 90 days)")
-    return n
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ar", required=True)
     ap.add_argument("--target", required=True)
     ap.add_argument("--profile", required=True)
-    ap.add_argument("--window-days", type=window_days_arg, default=30)
+    ap.add_argument("--date", required=True, help="the UTC day to cover, YYYY-MM-DD (already checked by the caller)")
     ap.add_argument("--regions", default=HOME_REGION, help="comma or space separated; us-east-1 is always included")
     args = ap.parse_args()
     regions = [r for r in re.split(r"[,\s]+", args.regions) if r]
     try:
-        print(json.dumps(collect(Aws(args.profile), args.ar, args.target, args.window_days, regions), indent=2))
-    except (CollectionError, AwsError) as e:
+        print(json.dumps(collect(Aws(args.profile), args.ar, args.target, day_for(args.date), regions), indent=2))
+    except (CollectionError, AwsError, DayError) as e:
         sys.exit(f"ERROR: {e}")
 
 

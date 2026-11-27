@@ -36,6 +36,18 @@ rsc_default_branch() {
   if [[ -n "${RSC_BASE_REF:-}" ]]; then echo "${RSC_BASE_REF}"; else gh api "repos/$1" --jq .default_branch; fi
 }
 
+# The UTC day an EVENT collector covers (see day_window.py): RSC_DATE, default yesterday.
+# Sets DAY_DATE, DAY_START, DAY_END (half-open) and DAY_BACKFILL (true/false), or exits
+# non-zero with the reason. State collectors never call this: they judge the present.
+rsc_day_window() {
+  local day
+  day="$(python3 "${RSC_LIB_DIR}/day_window.py")" || return 1
+  DAY_DATE="$(jq -r .covers_date <<<"${day}")"
+  DAY_START="$(jq -r .start <<<"${day}")"
+  DAY_END="$(jq -r .end <<<"${day}")"
+  DAY_BACKFILL="$(jq -r .backfill <<<"${day}")"
+}
+
 # Run a command, retrying a few times: GitHub's API returns transient 5xx
 # (e.g. HTTP 502/504) on heavy GraphQL queries, and sometimes a truncated
 # response ("unexpected end of JSON input") or a dropped connection. Anything else,
@@ -142,9 +154,11 @@ rsc_collect_all() {
 
   # No assessment_requirement key: the Rego packages judge every JSON file under
   # input_path, and the manifest is not evidence about any repository.
-  jq -n --arg ar "${AR_ID}" --arg env "${RSC_ENV:-integration}" \
+  # An event collector also says which day it covered (DAY_DATE, see rsc_day_window).
+  jq -n --arg ar "${AR_ID}" --arg env "${RSC_ENV:-integration}" --arg day "${DAY_DATE:-}" \
     --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson targets "${targets}" \
-    '{ar: $ar, environment: $env, generated_at: $at, targets: $targets}' >"${out_dir}/manifest.json"
+    '{ar: $ar, environment: $env, generated_at: $at, targets: $targets}
+     + (if $day != "" then {covers_date: $day} else {} end)' >"${out_dir}/manifest.json"
 
   echo "${AR_ID}: collected ${ok} target(s), ${failed} error(s); manifest at ${out_dir}/manifest.json" >&2
   [[ "${ok}" -gt 0 ]] || { echo "ERROR: ${AR_ID}: no target could be collected." >&2; return 1; }
