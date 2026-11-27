@@ -8,6 +8,7 @@ and locally via `make run-local`).
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -72,6 +73,23 @@ def missing_evidence(ars: list, evidence_dir: Path) -> list:
     return missing
 
 
+def reset_generation_cache(workspace: Path = Path(".complytime")) -> None:
+    """Make complyctl regenerate the opa scan configuration before the next scan.
+
+    The opa provider stores ONE generated scan configuration per target INPUT PATH
+    (complytime-providers internal/genindex TargetKey), not per policy or per
+    target id. All our policies read the same evidence directory, so each policy's
+    generation overwrites the previous one's. complyctl's own per-policy cache
+    still says "up to date", so from the second run on it skips regenerating and
+    the provider scans a policy with whichever configuration was written last:
+    change-management would evaluate identity-access's requirements. Clearing both
+    caches before each scan forces generate-then-scan for that policy, in order.
+    Remove this once the provider keys its generated state by policy.
+    """
+    for sub in ("generation", "opa/generated"):
+        shutil.rmtree(workspace / sub, ignore_errors=True)
+
+
 def run(cmd: list, check: bool = True) -> None:
     print(f"==> {' '.join(cmd)}", flush=True)
     subprocess.run(cmd, check=check)
@@ -109,6 +127,7 @@ def main() -> None:
     # check=False: complyctl exits non-zero when any AR fails, which is a
     # finding to report, not a pipeline error.
     for policy_id in policy_ids():
+        reset_generation_cache()
         run(
             ["complyctl", "scan", "--policy-id", policy_id, "--format", "oscal,sarif,pretty"],
             check=False,

@@ -64,3 +64,44 @@ class PolicyArs(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GenerationCache(unittest.TestCase):
+    """The opa provider keys its generated scan config by input path, so policies sharing
+    an input path overwrite each other; the entrypoint must force regeneration."""
+
+    def test_reset_removes_both_caches_and_keeps_the_rest(self):
+        with tempfile.TemporaryDirectory() as t:
+            ws = Path(t) / ".complytime"
+            for sub in ("generation/x", "opa/generated/y", "scan", "opa/results"):
+                (ws / sub).mkdir(parents=True)
+                (ws / sub / "f").write_text("x")
+            entrypoint.reset_generation_cache(ws)
+            self.assertFalse((ws / "generation").exists())
+            self.assertFalse((ws / "opa/generated").exists())
+            self.assertTrue((ws / "scan/f").exists())
+            self.assertTrue((ws / "opa/results/f").exists())
+
+    def test_reset_is_harmless_when_nothing_exists(self):
+        with tempfile.TemporaryDirectory() as t:
+            entrypoint.reset_generation_cache(Path(t) / "nope")
+
+    def test_every_scan_is_preceded_by_a_reset(self):
+        import os
+        from unittest import mock
+        calls = []
+        cwd = os.getcwd()
+        os.chdir(ROOT)
+        try:
+            with mock.patch.object(entrypoint, "reset_generation_cache", side_effect=lambda *a: calls.append("reset")), \
+                 mock.patch.object(entrypoint, "run", side_effect=lambda cmd, check=True: calls.append(cmd[1] if cmd[0] == "complyctl" else cmd[0])), \
+                 mock.patch.object(entrypoint, "missing_evidence", return_value=[]), \
+                 mock.patch.object(entrypoint.subprocess, "run"), \
+                 mock.patch.dict(os.environ, {"GITHUB_TOKEN": "x", "RSC_EVIDENCE_DIR": str(ROOT / "evidence/output")}):
+                entrypoint.main()
+        finally:
+            os.chdir(cwd)
+        scans = [i for i, c in enumerate(calls) if c == "scan"]
+        self.assertGreaterEqual(len(scans), 2)  # one per domain
+        for i in scans:
+            self.assertEqual(calls[i - 1], "reset")

@@ -327,8 +327,22 @@ def tool_versions(root: Path) -> dict:
     return tools
 
 
+# Fields that hold hex hashes or random ids. A run of 12 digits inside a SHA-256 is
+# common by chance (about 2% of hashes), so these are exempt from the account-ID
+# pattern; every other field is still scanned strictly.
+HASH_FIELDS = ("evidence_sha256", "policy_sha256", "commit", "run_id", "sha256")
+
+
+def _without_hashes(value):
+    if isinstance(value, dict):
+        return {k: ("<hash>" if k in HASH_FIELDS and isinstance(v, str) else _without_hashes(v)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_without_hashes(v) for v in value]
+    return value
+
+
 def assert_clean(record: dict) -> None:
-    text = json.dumps(record)
+    text = json.dumps(_without_hashes(record))
     for pat in LEAK_PATTERNS:
         if re.search(pat, text):
             raise RecordError(f"the record matches a sensitive pattern ({pat}); refusing to write it")

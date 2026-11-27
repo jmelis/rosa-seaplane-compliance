@@ -493,3 +493,25 @@ class BasisFile(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HashesAreNotAccountIds(unittest.TestCase):
+    """A run of 12 digits inside a hex hash must not trip the leak check (about 2% of
+    random SHA-256 strings contain one, and a record carries several hashes), but the same
+    digits anywhere else still must."""
+
+    def test_digit_run_inside_a_hash_field_is_allowed(self):
+        digits = "7" * 12
+        for field in br.HASH_FIELDS:
+            br.assert_clean({field: "ab" + digits + "cd" * 20})
+        br.assert_clean({"methods": [{"evidence_sha256": digits + "ab" * 26}], "pipeline": {"commit": "e" + digits + "f"}})
+
+    def test_the_same_digits_in_any_other_field_are_refused(self):
+        digits = "7" * 12
+        for bad in ({"note": "ab" + digits + "cd"}, {"x": {"y": [f"x{digits}"]}}, {"evidence_sha256_note": digits}):
+            with self.assertRaises(br.RecordError, msg=str(bad)):
+                br.assert_clean(bad)
+
+    def test_a_non_string_hash_field_is_still_scanned(self):
+        with self.assertRaises(br.RecordError):
+            br.assert_clean({"commit": {"leak": "7" * 12}})
