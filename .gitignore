@@ -7,6 +7,9 @@ evidence/output/
 # generated coverage, SDR and viewer output
 output/
 
+# the local run history holds real findings: never commit it (the real home is the evidence locker)
+.history/
+
 *.log
 __pycache__/
 *.pyc
