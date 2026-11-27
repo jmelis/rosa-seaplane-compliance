@@ -19,13 +19,13 @@ measures: >
   read from the account's IAM credential report, and every principal holding an
   active long-term access key is reported. Behavior: for every long-term access key
   that exists (active or inactive), CloudTrail event history is searched for events
-  made with that key during the evaluation window (30 days by default, at most the 90
-  days event history keeps), and any authentication with a long-term credential is
+  made with that key on the day evaluated (one UTC day, by default yesterday, at most
+  the 90 days event history keeps), and any authentication with a long-term credential is
   reported; the account's own last-used record for each key is cross-checked against
   the audit log, and a disagreement is reported rather than passed. Services and
   automation are expected to authenticate with short-lived credentials, so both a
   standing key and a key that is really being used are the things to find. Known
-  limits, recorded in the evidence: keys deleted inside the window cannot be listed,
+  limits, recorded in the evidence: keys deleted since the day cannot be listed,
   only management events are searched (not data-plane calls), and a session started
   with a key is seen only as the call made with the key. Not yet measured: non-AWS
   identities (GitHub tokens, Kubernetes service accounts).
@@ -37,7 +37,7 @@ automation-verification: >
   tests and passing and failing fixtures, lookups are paced to the API's limits and
   retried, and any lookup that fails, is throttled out, or disagrees with the account's
   last-used record makes the result incomplete or suspect, which is reported and never
-  read as a pass. A key that cannot be found (deleted in the window) or a use the audit
+  read as a pass. A key that cannot be found (deleted since the day) or a use the audit
   log does not record is outside what they can see; the evidence states this. They
   are not sufficient on their own: non-AWS identities are not covered.
 validation: >

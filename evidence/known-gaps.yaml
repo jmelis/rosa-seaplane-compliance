@@ -17,7 +17,8 @@ RSC.CMT.CTRL01.AR01:
 RSC.CMT.CTRL01.AR02:
   - Merges by an administrator who bypasses the merge gate look like ordinary merges. Telling them apart needs the organization audit log, which is not read.
   - Commits pushed straight to the default branch are not pull requests, so this check cannot see them. The configuration check is what is meant to forbid them.
-  - Only pull requests merged into the default branch inside the window are examined (30 days by default, RSC_WINDOW_DAYS). Collection fails, rather than truncating silently, past 20 pages of 50 merged pull requests.
+  - Only pull requests merged into the default branch on the one UTC day collected (default yesterday, RSC_DATE) are examined. A day with no merge is a complete, empty collection and passes. Pages are read, newest update first, down to the start of the day; collection fails, rather than truncating silently, past 20 pages of 50 merged pull requests, so a day deep in a busy repository's history cannot always be recovered.
+  - Approvals, required checks and the automation exemption's facts are read when the collector runs, not as they were on the day. A backfilled day is judged with today's configuration and a late `/lgtm` counts.
   - Approval history is read up to 100 comments and 50 reviews per pull request, and labels up to 50. A longer history sets history_truncated, and an approval beyond the cap would be missing from the evidence.
   - Prow approvals are judged from the labels present now and from commands in comments and review bodies made before the merge. The history of labels being added and removed is not replayed.
   - The automation exemption's commit check reads up to 100 commits per pull request. A pull request with more cannot meet it.
@@ -36,7 +37,9 @@ RSC.IAM.CTRL01.AR01:
   - Long-term credentials outside AWS (source-control tokens, cluster service accounts) are outside this check; the KSI is therefore reported as partly implemented.
 
 RSC.IAM.CTRL01.AR02:
-  - access keys deleted inside the window cannot be listed, so they are not checked
+  - Only the one UTC day collected (default yesterday, RSC_DATE; at most 90 days back, what CloudTrail event history keeps) is searched. A day with no key or no event is a complete, empty collection and passes.
+  - the keys checked are those that exist when the collector runs, so a key deleted since the covered day cannot be listed and is not checked
+  - IAM records only the most recent use of a key, so its last-used time can contradict an empty day only when that use fell inside the day
   - only management events in CloudTrail event history (the last 90 days) are searched; data-plane calls are not
   - a session started with a key is seen only as the call made with the key, not followed afterwards
   - Only the regions of the selected environment (always including the one that records global service calls) are searched.
@@ -56,7 +59,9 @@ RSC.CMT.CTRL03.AR01:
   - The pipeline itself does not wait for the deployed applications to become healthy. The management pipeline waits for nothing after bootstrapping the deployment tool, and the regional pipeline waits only for the platform API to be live. Whether the applications are healthy afterwards is read separately, from the deployment tool's metrics, by RSC.CMT.CTRL03.AR02.
   - Execution history is read up to 30 pages of 100 runs and merged pull requests up to 20 pages of 50. Collection is marked incomplete, never silently truncated, past either cap.
   - A merged change counts as deployed if one of the first three successful runs after it applied it, or applied a commit that contains it. One deployed only by a later run than that is reported as not deployed.
-  - Time is judged against the collection's own timestamp and an allowed lag set in the environment configuration. A change or head newer than the lag is not judged yet.
+  - Only the changes merged on the one UTC day collected (default yesterday, RSC_DATE) are examined; a day with no merge passes. Runs are read from the start of that day up to the collection time, since a change merged late is deployed after the day ends.
+  - Time is judged against the collection's own timestamp and an allowed lag set in the environment configuration. A change or head newer than the lag is not judged yet; a backfilled day is judged as of the day it is collected.
+  - The head of the branch and the latest run describe the present, not the covered day, so a backfill does not judge them (config/history/ar-basis.yaml, state_rules).
   - The applied record is the pipeline's own export. If it is absent on a successful run, that run is taken to have applied its source commit, which the build itself asserts.
 
 RSC.CMT.CTRL03.AR02:

@@ -266,7 +266,7 @@ credential.
 | `make validate` | `cue vet` of every `gemara/*/` file and every mapping against the upstream Gemara schema. | pass/fail |
 | `make publish-policy` | Pushes each domain's controls and policy to the registry as one OCI artifact each. | `oras pull --plain-http localhost:5050/rosa-seaplane-compliance/policies/change-management:v0.1.0 -o /tmp/policy-bundle` |
 | `make publish-complypack` | Packs every domain's Rego (minus tests) and the merged `complytime-mapping.json` into one complypack, validating first, and pushes it. | after a run: `ls ~/.cache/complytime/complypacks/opa/*/content` (macOS: `~/Library/Caches/complytime/...`) |
-| `make run-local` | Collects evidence from every repo in `config/scope.yaml` and every AWS account of the environment (read-only; needs the AWS access in `docs/credentials.md` and Prowler from the one-time setup), then `complyctl scan`. Renders `.complytime/complytime.yaml` first (`make config`). | `evidence/output/<AR>/<repo>.json` and `manifest.json`; in `.complytime/scan/`: `report-*.md` (readable), `evaluation-log-*.yaml` (L5), `assessment-results-*.json` (OSCAL), `scan-*.sarif.json` |
+| `make run-local` | Collects evidence from every repo in `config/scope.yaml` and every AWS account of the environment (read-only; needs the AWS access in `docs/credentials.md` and Prowler from the one-time setup), then `complyctl scan`. The event checks cover one UTC day, `RSC_DATE` (or `DATE`), default yesterday and never an earlier one; the state checks judge now. Renders `.complytime/complytime.yaml` first (`make config`). | `evidence/output/<AR>/<repo>.json` and `manifest.json`; in `.complytime/scan/`: `report-*.md` (readable), `evaluation-log-*.yaml` (L5), `assessment-results-*.json` (OSCAL), `scan-*.sarif.json` |
 | `make findings` | One deterministic report (no AI, no network) over the evidence of the last run: **findings** (violations, incomplete evidence, not-reached targets, each with rule, subject and fix hint), **gaps** in our work per KSI, and **limits** of each check. Runs the policies itself; re-runs no collector. | `output/findings.md`, `output/findings.json` |
 | `make why AR=<id>` | Lists the per-target denials for an AR (with rule ids) and any target the collector could not reach. | stdout |
 | `make push-evidence` | Copies `evidence/output/` and `.complytime/scan/` to the evidence locker under `s3://$RSC_S3_BUCKET/$RSC_S3_PREFIX/<run-timestamp>/`. Needs `RSC_S3_BUCKET` (and `RSC_S3_ENDPOINT_URL` for a local bucket). | `aws --endpoint-url "$RSC_S3_ENDPOINT_URL" s3 ls --recursive "s3://$RSC_S3_BUCKET/"` |
@@ -277,9 +277,9 @@ credential.
 | `make trace` | Builds `output/trace.json`: every AR joined to what it evidences (KSIs, 800-53, any framework with a mapping file, each link with its rationale), its plan, collector, schema, Rego, fixtures, the targets reached, and its latest result. Fails, listing every problem, if a link does not resolve. | `output/trace.json` |
 | `make sdr-view` | Builds the trace, then renders one offline HTML page with three tabs: **Assessment requirements** (index plus a page per AR), **Findings** (when `make findings` has evidence to work from) and **KSIs** (overview, filterable list, page per KSI). | open `output/sdr/index.html` |
 | `make history-init` | Once per history home: writes the `INIT` marker so the store can tell "never set up" from "unreadable". Home: `s3://$RSC_S3_BUCKET/$RSC_S3_PREFIX/history/` when `RSC_S3_BUCKET` is set, else `.history/` (gitignored). | `scripts/history.py status` |
-| `make record [DATE=<day>]` | Appends one run record (a result per KSI per automated method, counts only) for the UTC day it covers. Never overwrites; refuses stale evidence (over `--max-evidence-age-hours`, 24) and a past `DATE` (backfill arrives with the collectors' date support). | `v1/runs/YYYY/MM/DD/<run_id>.json` in the history home |
-| `make history-summary` | Summarises the stored records: last 30 days, available history up to 365 days, STALE and GAP alarms. | `output/history/summary.{json,md}`, `output/sdr/ksi-metrics.json` |
-| `make daily [DATE=<day>]` | One command for the daily cycle: `run-local`, `coverage`, `findings`, `trace`, `record`, `history-summary`, `sdr-view`. `record` and `history-summary` come before the SDR build so the SDR and the viewer's **History** tab include today's record. | the outputs above |
+| `make record [DATE=<day>]` | Appends one run record (a result per KSI per automated method, counts only) for the UTC day it covers. `DATE` defaults to yesterday; an earlier day is a backfill (its state methods are `not_collected`); today, the future and over 90 days ago are refused. Never overwrites; refuses stale evidence (over `--max-evidence-age-hours`, 24), and event evidence collected for another day. | `v1/runs/YYYY/MM/DD/<run_id>.json` in the history home |
+| `make history-summary` | Summarises the stored records: last 30 days, available history up to 365 days, and the alarms (WARN: a daily run was missed; ALERT: the 3-day cadence is broken). | `output/history/summary.{json,md}`, `output/sdr/ksi-metrics.json` |
+| `make daily [DATE=<day>]` | The daily cycle, at or after 02:00 UTC. First it **backfills** every day of the last `RSC_BACKFILL_DAYS` (5, at least 3) before yesterday that has no record (event checks only, oldest first), then runs **yesterday** in full: `run-local`, `coverage`, `findings`, `trace`, `record`, `history-summary`, `sdr-view`. `DATE=<day>` runs only that day. A failed backfill is reported and does not stop the normal run; the exit code is then non-zero. | the outputs above; a backfill's working files are in `output/backfill/<day>/` |
 | `make build-image` / `make run-image` | The same evidence-and-scan loop in a container, for scheduled runs. GitHub collectors only: the AWS collectors need the SAML login and sibling checkouts that the image does not have yet. | |
 
 Everything under `output/`, `evidence/output/` and `.complytime/` is gitignored: it
@@ -300,6 +300,27 @@ and automated method, only a result and counts, never raw evidence, IDs or ARNs:
   present, e.g. branch protection) has no result for a past day. Never a pass, and it never replaces
   a real result for the same method and day. An *event* method (it judges items timestamped inside
   the day, e.g. merged PRs) does get a real result. `config/history/ar-basis.yaml` declares which is which.
+
+### One day at a time, and filling the gaps
+
+A day is the UTC interval `[D 00:00:00Z, D+1 00:00:00Z)`: an event at exactly `D 00:00:00Z` is in `D`,
+one at exactly `D+1 00:00:00Z` is in `D+1`. The three **event** checks (merged PRs reviewed, merged
+changes deployed, long-term keys used) take that day, `RSC_DATE`, default yesterday, and their evidence
+and the manifest say which day they cover. The record builder refuses evidence that covers another
+day, so a day's result is never relabelled. A day with nothing in it (no merge, no key use) passes,
+as long as the collection was complete: the repository was reached, the pages were read down to the
+day, nothing was capped. The **state** checks (configuration, which keys exist, health) judge the
+present and record when they looked.
+
+`make daily` runs at or after 02:00 UTC (a day gets `RSC_SETTLE_MINUTES`, 120, for its late events;
+`RSC_ALLOW_EARLY=1` overrides). It first backfills any day in the last `RSC_BACKFILL_DAYS` (5) before
+yesterday that has no record, then runs yesterday. A **backfill** can recover an event check for a
+past day (up to 90 days, CloudTrail's limit) but never a state check: that day's state cannot be
+reconstructed and today's is not passed off as it, so those methods are `not_collected`. A backfill
+writes into `output/backfill/<day>/`, never over the latest evidence or outputs, and makes no scan,
+SDR or viewer. A backfill that fails writes no record, so the next run tries it again. `make daily
+DATE=<day>` runs just that day. Alarms: **WARN** when the newest covered day is more than one day behind
+yesterday, **ALERT** when it is more than 3 days old or two covered days are more than 3 days apart.
 
 The store is append-only (a rerun of a day adds a record; the latest by `finished_at` is that day's
 result and every record is kept) and fails closed: a missing marker, an unreadable store or an
@@ -395,8 +416,9 @@ the read-only role:
   long-term access key.
 - **AR02** looks for use, without scanning the audit log (CloudTrail's lookup API returns 50
   events per call at 2 calls per second, which would take hours). It lists the keys that
-  exist, asks CloudTrail for each key's events in the window (`RSC_WINDOW_DAYS`, default 30,
-  at most 90), stops at the first events found, and cross-checks IAM's own last-used record.
+  exist, asks CloudTrail for each key's events on the day collected (default yesterday, at most
+  90 days back), stops at the first events found, and cross-checks IAM's own last-used record.
+  IAM keeps only a key's most recent use, so it can contradict an empty day only if that use fell in the day.
   A lookup that fails, or a key IAM says was used that the audit log does not show, is denied,
   never passed. The evidence keeps a trimmed sample of events, never IPs or full key ids.
 
@@ -454,14 +476,19 @@ judges every application over the lookback window (30 minutes by default):
 - The health check (`RSC.CMT.CTRL03.AR02`) flags only an application that stayed unhealthy for the
   whole lookback window, so a break that began inside the window, or an outage between daily runs,
   is not seen; it depends on the platform's metrics pipeline and on the metrics gateway's access policy.
-- History: nothing schedules `make daily` and nothing alarms when a run is missing beyond the STALE
-  and GAP lines in the summary; laptop runs are not production evidence; history starts when records
+- History: nothing schedules `make daily` and nothing alerts anyone when a run is missing beyond the
+  WARN and ALERT lines in the summary; laptop runs are not production evidence; history starts when records
   are first appended; this repo does not configure S3 Object Lock on the bucket; FedRAMP's SDR schema
-  has no field for the daily series, so it ships as `output/sdr/ksi-metrics.json` beside the SDR;
-  backfilling a past day arrives with the collectors' date support.
+  has no field for the daily series, so it ships as `output/sdr/ksi-metrics.json` beside the SDR.
+- Backfill recovers event checks only, up to 90 days; a state check for a missed day stays
+  `not_collected`. A backfilled day is judged with approvals, required checks and the exemption
+  facts as they are when it is collected, and a change merged on the day and still undeployed is
+  judged against the collection time. Reading a day deep in a busy repository's history can hit the
+  page cap, which fails the collection (never an empty pass). Late events (CloudTrail can lag minutes,
+  GitHub seconds) are why a day settles for two hours before it is collected.
 - `gemara/change-management` is the only control domain.
 - AR02 does not detect admin-bypass merges (needs the org audit log API).
-- AR02 of the identity control cannot see keys deleted inside the window, calls the audit log
+- AR02 of the identity control cannot see keys deleted since the day collected, calls the audit log
   does not record (data-plane), or what a session did after it started. Reading the trail's S3
   logs would remove those limits but needs access to the log bucket.
 - The change-logging check confirms the audit log and one alert exist. It does not cover alerts on other kinds of change, who receives an alert, or other regions than the environment's; `config/prowler/checks.yaml` lists what was left out and why.

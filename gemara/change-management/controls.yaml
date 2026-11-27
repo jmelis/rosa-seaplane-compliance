@@ -20,9 +20,9 @@ controls:
         state: Active
       - id: RSC.CMT.CTRL01.AR02
         text: >
-          Every pull request merged to the default branch in the evaluation
-          window must have carried a non-author approval and passed required
-          status checks.
+          Every pull request merged to the default branch on the day evaluated
+          (one UTC day) must have carried a non-author approval and passed
+          required status checks. A day with no merge has nothing to review.
         applicability:
           - github_repositories
         state: Active
@@ -56,8 +56,8 @@ controls:
     assessment-requirements:
       - id: RSC.CMT.CTRL03.AR01
         text: >
-          Every change merged to the default branch in the evaluation window must
-          have been deployed to the environment by the automated deployment
+          Every change merged to the default branch on the day evaluated (one UTC
+          day) must have been deployed to the environment by the automated deployment
           pipeline, the deployment must have succeeded, and the environment must be
           running the head of the default branch, allowing a short delay for the
           deployment itself. It confirms that deployments were applied and finished

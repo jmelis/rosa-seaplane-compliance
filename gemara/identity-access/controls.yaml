@@ -18,10 +18,10 @@ controls:
       - id: RSC.IAM.CTRL01.AR02
         text: >
           No non-human principal (service or automation identity) in an in-scope
-          account may have authenticated with a long-term credential during the
-          evaluation window, as far as the account's audit log records. It looks at
-          the credentials that exist and the management events in the log's search
-          window; a credential deleted inside the window, or used only for calls the
+          account may have authenticated with a long-term credential on the day
+          evaluated (one UTC day), as far as the account's audit log records. It looks
+          at the credentials that exist and the management events in the log's search
+          window; a credential deleted since that day, or used only for calls the
           log does not record, is outside what it can see, and the evidence says so.
         applicability:
           - aws_accounts

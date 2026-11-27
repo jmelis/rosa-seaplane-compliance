@@ -21,11 +21,11 @@ measures: >
   checks are required, whether that gate is enforced so it cannot be bypassed
   (including by administrators), and whether force-pushes are forbidden; the approval
   requirement is read from GitHub's required reviews or from the merge bot's rules.
-  Behavior at merge: every pull request merged in the evaluation window (30 days by
-  default) is checked for a non-author approval and passing status checks, with the
+  Behavior at merge: every pull request merged on the day evaluated (one UTC day, by
+  default yesterday; each daily run adds that day to the history) is checked for a non-author approval and passing status checks, with the
   approval established from GitHub reviews and from the merge bot's approval commands.
   Behavior after the merge, in two parts. First, for each of the environment's
-  deployment pipelines, every change merged in the window is checked to have been
+  deployment pipelines, every change merged on the day is checked to have been
   applied by a successful run of the pipeline (directly, or by a later run that
   contains it), and the environment is checked to be running the head of the default
   branch within an allowed delay. Second, for each cluster, the applications that make

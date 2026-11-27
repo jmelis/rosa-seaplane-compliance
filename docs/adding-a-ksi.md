@@ -141,6 +141,30 @@ Examples: [evidence/RSC.IAM.CTRL01.AR01.sh](../evidence/RSC.IAM.CTRL01.AR01.sh) 
 [evidence/RSC.CMT.CTRL02.AR01.sh](../evidence/RSC.CMT.CTRL02.AR01.sh) (Prowler),
 [evidence/RSC.CMT.CTRL01.AR02.sh](../evidence/RSC.CMT.CTRL01.AR02.sh) (GitHub GraphQL, paging).
 
+### Event or state: declare it in `config/history/ar-basis.yaml`
+
+Every automated method is exactly one of two kinds, and the daily history and backfill depend on it:
+
+- **`event`**: it judges items timestamped inside a day (merged PRs, key-use events, pipeline runs).
+  The collector takes **one UTC day** and can be rerun for a missed day (a backfill).
+  Source `rsc_day_window || exit 1` after `collect.sh`: it sets `DAY_DATE`, `DAY_START`, `DAY_END`
+  from `RSC_DATE` (default yesterday), refusing today, the future and anything over 90 days old. Collect
+  exactly the items in the half-open `[DAY_START, DAY_END)` (an item at `DAY_END` belongs to the next
+  day: mind sources whose end time is inclusive), and write `covers_date` and
+  `window: {start, end}` at the top level of every evidence file (the record builder refuses evidence
+  that does not say it covers the record's day). A day with nothing in it is a **complete, empty
+  collection and must pass**: never add a rule such as "no items found". The safeguard against a
+  silent gap is completeness: the target was reached, every page down to the day was read, nothing was
+  capped; anything else is an error or `collection.complete: false`, never a pass. Judge facts that
+  change after the day (approvals, configuration) as of collection time, and say so in
+  `evidence/known-gaps.yaml`.
+- **`state`**: it judges the present (configuration, which keys exist, health). It ignores the date,
+  records `generated_at`, and a backfill records it as `not_collected` for a past day.
+
+An event method that also has rules reading the present (for example "the head is deployed") lists
+them as `state_rules`; a backfill ignores them. The AR has no entry? The record builder refuses to
+build a record until it does.
+
 ## 5. Normalize the evidence
 
 The evidence is what the Rego reads, so shape it for the *question*, in source-neutral names
@@ -257,7 +281,11 @@ changed. The real run may *fail*: that is data, not a defect. Do not make it pas
   `assessment_requirement` out of `manifest.json`.
 - **`rc=$?` after an `if` reads 0**, and `set -e` is ignored inside functions called from `if`.
 - **GitHub pages by `updatedAt`**, not merge time: stop paging when a page's oldest `updatedAt`
-  is before the window, not when one merge date is.
+  is before the start of the day, not when one merge date is.
+- **CloudTrail's `--end-time` is inclusive**: drop an event at exactly the end of the day, or it is
+  counted in two days.
+- **An empty day must pass**, so a "no items found" rule is a bug for an event check (it failed every
+  quiet day); check that the collection was complete instead.
 - **Fine-grained GitHub tokens have no "Checks" permission**; reading check state on a private
   repo needs "Commit statuses" read.
 - **Fake account IDs must be built at run time** (`"1" * 12`): a 12-digit literal fails the
