@@ -276,11 +276,35 @@ credential.
 | `make sdr` | Builds the FedRAMP Security Decision Record from coverage, the KSI records, the policies' planned cycle and the latest L5 results; validated against the vendored schema. Failed results stay visible, an AR with no result is "not evaluated", assessor fields stay empty, and local paths, usernames, account IDs and raw messages are never written. | `output/sdr/sdr.json` |
 | `make trace` | Builds `output/trace.json`: every AR joined to what it evidences (KSIs, 800-53, any framework with a mapping file, each link with its rationale), its plan, collector, schema, Rego, fixtures, the targets reached, and its latest result. Fails, listing every problem, if a link does not resolve. | `output/trace.json` |
 | `make sdr-view` | Builds the trace, then renders one offline HTML page with three tabs: **Assessment requirements** (index plus a page per AR), **Findings** (when `make findings` has evidence to work from) and **KSIs** (overview, filterable list, page per KSI). | open `output/sdr/index.html` |
+| `make history-init` | Once per history home: writes the `INIT` marker so the store can tell "never set up" from "unreadable". Home: `s3://$RSC_S3_BUCKET/$RSC_S3_PREFIX/history/` when `RSC_S3_BUCKET` is set, else `.history/` (gitignored). | `scripts/history.py status` |
+| `make record [DATE=<day>]` | Appends one run record (a result per KSI per automated method, counts only) for the UTC day it covers. Never overwrites; refuses stale evidence (over `--max-evidence-age-hours`, 24) and a past `DATE` (backfill arrives with the collectors' date support). | `v1/runs/YYYY/MM/DD/<run_id>.json` in the history home |
+| `make history-summary` | Summarises the stored records: last 30 days, available history up to 365 days, STALE and GAP alarms. | `output/history/summary.{json,md}`, `output/sdr/ksi-metrics.json` |
+| `make daily [DATE=<day>]` | One command for the daily cycle: `run-local`, `coverage`, `findings`, `trace`, `record`, `history-summary`, `sdr-view`. `record` and `history-summary` come before the SDR build so the SDR and the viewer's **History** tab include today's record. | the outputs above |
 | `make build-image` / `make run-image` | The same evidence-and-scan loop in a container, for scheduled runs. GitHub collectors only: the AWS collectors need the SAML login and sibling checkouts that the image does not have yet. | |
 
 Everything under `output/`, `evidence/output/` and `.complytime/` is gitignored: it
 describes real findings, so do not publish it. The viewer has no external scripts,
 fonts or requests and HTML-escapes all data.
+
+## History and daily records
+
+FedRAMP's `SDR-CSX-KMT` asks for a 30-day summary, a summary up to the past year, and all
+daily metric data, so each run leaves a **record**. A record is about one UTC day (`covers_date`,
+the interval from `D 00:00:00Z` up to `D+1 00:00:00Z`), not about when it ran. It holds, per KSI
+and automated method, only a result and counts, never raw evidence, IDs or ARNs:
+
+- `pass`: complete, every expected target reached, no violation.
+- `fail`: at least one violation (wins over `error`).
+- `error`: could not be judged. Never a pass, never left out.
+- `not_collected`: a backfill cannot reconstruct past state, so a *state* method (it judges the
+  present, e.g. branch protection) has no result for a past day. Never a pass, and it never replaces
+  a real result for the same method and day. An *event* method (it judges items timestamped inside
+  the day, e.g. merged PRs) does get a real result. `config/history/ar-basis.yaml` declares which is which.
+
+The store is append-only (a rerun of a day adds a record; the latest by `finished_at` is that day's
+result and every record is kept) and fails closed: a missing marker, an unreadable store or an
+incompatible layout is an error, never "no history". The record shape is `schemas/run-record.schema.json`.
+The history holds real findings: keep it in the evidence locker, never in git.
 
 ## Walking the trail
 
@@ -430,6 +454,11 @@ judges every application over the lookback window (30 minutes by default):
 - The health check (`RSC.CMT.CTRL03.AR02`) flags only an application that stayed unhealthy for the
   whole lookback window, so a break that began inside the window, or an outage between daily runs,
   is not seen; it depends on the platform's metrics pipeline and on the metrics gateway's access policy.
+- History: nothing schedules `make daily` and nothing alarms when a run is missing beyond the STALE
+  and GAP lines in the summary; laptop runs are not production evidence; history starts when records
+  are first appended; this repo does not configure S3 Object Lock on the bucket; FedRAMP's SDR schema
+  has no field for the daily series, so it ships as `output/sdr/ksi-metrics.json` beside the SDR;
+  backfilling a past day arrives with the collectors' date support.
 - `gemara/change-management` is the only control domain.
 - AR02 does not detect admin-bypass merges (needs the org audit log API).
 - AR02 of the identity control cannot see keys deleted inside the window, calls the audit log

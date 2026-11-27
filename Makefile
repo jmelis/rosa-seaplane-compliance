@@ -23,7 +23,7 @@ PYTHON               ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,pytho
 # not complyctl itself. Pulled from the CUE Central Registry.
 GEMARA_SCHEMA_VERSION ?= v1.6.0
 
-.PHONY: findings aws-role why env config validate test publish-policy publish-complypack build-image run-local run-image doctor coverage push-evidence sdr sdr-view trace
+.PHONY: daily record history-init history-summary findings aws-role why env config validate test publish-policy publish-complypack build-image run-local run-image doctor coverage push-evidence sdr sdr-view trace
 
 ## Explain why an AR failed: per-evidence-file denials and unreached targets.
 ## Usage: make why AR=RSC.CMT.CTRL01.AR02
@@ -119,3 +119,35 @@ findings: coverage
 sdr-view: sdr trace
 	@$(PYTHON) scripts/build_findings.py || echo "NOTE: no Findings tab (run make run-local, then make findings)"
 	$(PYTHON) scripts/render_sdr_html.py
+
+## Create the history store's version marker (idempotent). RSC_S3_BUCKET set => the evidence
+## locker (S3, RSC_S3_PREFIX, RSC_S3_ENDPOINT_URL); otherwise the local folder RSC_HISTORY_DIR
+## or .history/ (gitignored). The history holds real findings: it never lives in this repo.
+history-init:
+	$(PYTHON) scripts/history.py init
+
+## Append this run's record (a result per KSI per method, about one UTC day) to the history.
+## Build it right after `make run-local`, `make findings` and `make trace` (`make daily` does).
+## DATE=YYYY-MM-DD names the covered day; until the collectors take a date a run covers the day it
+## runs on, and a past DATE is refused (backfill arrives with the next step). Refuses to run when the
+## outputs are missing, older than the evidence, or the evidence is over a day old.
+record:
+	$(PYTHON) scripts/build_record.py $(if $(DATE),--date $(DATE))
+
+## Summaries of the stored series (30 days, the available year, missing days, gap alarms):
+## output/history/summary.json and summary.md, and output/sdr/ksi-metrics.json (daily series).
+history-summary:
+	$(PYTHON) scripts/history_summary.py
+
+## Everything one daily run does, in order, stopping at the first failure. This is what a
+## scheduler would run (no scheduler exists yet). Needs `make history-init` once. DATE as for `record`;
+## it is checked first, so a bad DATE fails before the long run.
+daily:
+	$(PYTHON) scripts/build_record.py --check-date-only $(if $(DATE),--date $(DATE))
+	$(MAKE) run-local
+	$(MAKE) coverage
+	$(MAKE) findings
+	$(MAKE) trace
+	$(MAKE) record $(if $(DATE),DATE=$(DATE))
+	$(MAKE) history-summary
+	$(MAKE) sdr-view
