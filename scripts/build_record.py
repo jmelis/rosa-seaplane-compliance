@@ -449,7 +449,7 @@ def main() -> None:
         counts = {r: sum(1 for m in record["methods"] if m["result"] == r) for r in ("pass", "fail", "error", "not_collected")}
         print(f"Appended run record {record['run_id']} covering {record['covers_date']} ({len(record['methods'])} methods: "
               f"{counts['pass']} pass, {counts['fail']} fail, {counts['error']} error, {counts['not_collected']} not collected) "
-              f"to {store.backend.where}{key}")
+              f"to {store.backend.where}: {key}")
     except (RecordError, history.StoreError) as e:
         sys.exit(f"ERROR: {e}")
 
