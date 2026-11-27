@@ -2,6 +2,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -105,3 +106,40 @@ class GenerationCache(unittest.TestCase):
         self.assertGreaterEqual(len(scans), 2)  # one per domain
         for i in scans:
             self.assertEqual(calls[i - 1], "reset")
+
+
+class TheDay(unittest.TestCase):
+    """`make run-local` decides the UTC day of the event checks once and tells every collector."""
+
+    NOW = datetime(2026, 11, 27, 9, 0, tzinfo=timezone.utc)
+
+    def fix(self, **env):
+        environ = dict(env)
+        day = entrypoint.fix_the_day(environ, self.NOW)
+        return day, environ
+
+    def test_default_is_yesterday_and_every_collector_is_told(self):
+        day, environ = self.fix()
+        self.assertEqual((day["covers_date"], day["backfill"]), ("2026-11-26", False))
+        self.assertEqual(environ["RSC_DATE"], "2026-11-26")
+
+    def test_an_explicit_yesterday_is_accepted(self):
+        self.assertEqual(self.fix(RSC_DATE="2026-11-26")[1]["RSC_DATE"], "2026-11-26")
+
+    def test_today_the_future_and_junk_are_refused(self):
+        for bad in ("2026-11-27", "2026-12-01", "tomorrow"):
+            with self.assertRaises(SystemExit, msg=bad):
+                self.fix(RSC_DATE=bad)
+
+    def test_a_past_day_is_a_backfill_and_run_local_sends_you_to_make_daily(self):
+        with self.assertRaises(SystemExit) as cm:
+            self.fix(RSC_DATE="2026-11-20")
+        self.assertIn("make daily DATE=", str(cm.exception))
+
+    def test_a_day_that_has_not_settled_is_refused_unless_allowed(self):
+        early = self.NOW.replace(hour=0, minute=30)
+        with self.assertRaises(SystemExit):
+            entrypoint.fix_the_day({}, early)
+        self.assertEqual(entrypoint.fix_the_day({"RSC_ALLOW_EARLY": "1"}, early)["covers_date"], "2026-11-26")
+        self.assertEqual(entrypoint.fix_the_day({"RSC_SETTLE_MINUTES": "10"}, early)["covers_date"], "2026-11-26")
+

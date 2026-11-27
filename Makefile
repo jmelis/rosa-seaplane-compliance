@@ -76,9 +76,12 @@ publish-complypack:
 build-image: config
 	podman build -t $(IMAGE) -f containers/complyctl/Containerfile .
 
-## Run evidence -> scan using locally installed complyctl + providers.
+## Run evidence -> scan using locally installed complyctl + providers. The event collectors cover one
+## UTC day: RSC_DATE (or DATE) = YYYY-MM-DD, default yesterday (the only day this accepts; earlier days
+## are backfills: `make daily DATE=...`). The state collectors judge the present.
 run-local: config
 	RSC_EVIDENCE_DIR="$$(pwd)/evidence/output" RSC_REPO_ROOT="$$(pwd)" GITHUB_TOKEN=$${GITHUB_TOKEN:?set GITHUB_TOKEN} \
+	  $(if $(or $(RSC_DATE),$(DATE)),RSC_DATE=$(or $(RSC_DATE),$(DATE))) \
 	  $(PYTHON) containers/complyctl/entrypoint.py
 
 ## Run the same loop inside the built container image.
@@ -128,9 +131,10 @@ history-init:
 
 ## Append this run's record (a result per KSI per method, about one UTC day) to the history.
 ## Build it right after `make run-local`, `make findings` and `make trace` (`make daily` does).
-## DATE=YYYY-MM-DD names the covered day; until the collectors take a date a run covers the day it
-## runs on, and a past DATE is refused (backfill arrives with the next step). Refuses to run when the
-## outputs are missing, older than the evidence, or the evidence is over a day old.
+## DATE=YYYY-MM-DD names the covered day, default yesterday: yesterday is a normal run, an earlier day a
+## backfill (its state methods are not_collected). Today, the future and days over 90 days ago are refused.
+## Refuses to run when the outputs are missing or older than the evidence, the evidence is over a day old,
+## or the evidence of an event method was collected for another day.
 record:
 	$(PYTHON) scripts/build_record.py $(if $(DATE),--date $(DATE))
 
@@ -139,15 +143,11 @@ record:
 history-summary:
 	$(PYTHON) scripts/history_summary.py
 
-## Everything one daily run does, in order, stopping at the first failure. This is what a
-## scheduler would run (no scheduler exists yet). Needs `make history-init` once. DATE as for `record`;
-## it is checked first, so a bad DATE fails before the long run.
+## Everything one daily run does; this is what a scheduler would run (none exists yet). Needs
+## `make history-init` once. First it backfills every day of the last RSC_BACKFILL_DAYS (default 5, at
+## least 3) before yesterday that has no record (event collectors only, oldest first, into
+## output/backfill/<day>/), then runs yesterday in full. DATE=<day> runs only that day (yesterday: the
+## normal run; earlier: a backfill). A failed backfill is reported and does not stop the normal run;
+## the exit code is non-zero if anything failed. Run it at or after 02:00 UTC (RSC_SETTLE_MINUTES).
 daily:
-	$(PYTHON) scripts/build_record.py --check-date-only $(if $(DATE),--date $(DATE))
-	$(MAKE) run-local
-	$(MAKE) coverage
-	$(MAKE) findings
-	$(MAKE) trace
-	$(MAKE) record $(if $(DATE),DATE=$(DATE))
-	$(MAKE) history-summary
-	$(MAKE) sdr-view
+	$(PYTHON) scripts/daily.py $(if $(DATE),--date $(DATE))
