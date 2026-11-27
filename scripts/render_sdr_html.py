@@ -386,6 +386,10 @@ ol.trace{padding-left:1.4rem}ol.trace>li{margin:.5rem 0}ol.trace ul{margin:.2rem
 .lookhere h3{margin:.6rem 0 .3rem}.lookhere blockquote{margin:.3rem 0;padding:.3rem .75rem;border-left:4px solid var(--warnfg);overflow-wrap:anywhere}
 code{font-family:ui-monospace,monospace;font-size:.85em;background:color-mix(in srgb,var(--fg) 8%,transparent);padding:0 .25rem;border-radius:3px;overflow-wrap:anywhere}
 .missing{border-top:1px solid var(--line);padding-top:.6rem}
+.dstrip{display:flex;gap:2px;flex-wrap:nowrap}.dc{display:inline-block;width:1.15rem;text-align:center;font-size:.8rem;line-height:1.3rem;border:1px solid var(--line);border-radius:3px}
+.dc-pass{background:color-mix(in srgb,#1a7f37 22%,transparent)}.dc-fail{font-weight:700;border-color:#d1242f;background:color-mix(in srgb,#d1242f 22%,transparent)}
+.dc-error{font-weight:700;border-style:dashed;border-color:var(--fg)}.dc-no-record{color:var(--muted);border-style:dotted}.dc-not_collected{color:var(--muted);border-style:double;border-width:3px}
+.alarm{border:2px solid #d1242f;border-radius:8px;padding:.4rem 1rem;margin:.75rem 0;font-weight:600}
 """
 
 FINDING_KIND_NOTE = {
@@ -465,6 +469,50 @@ def render_findings_page(rep: dict) -> str:
     return "".join(out)
 
 
+DAY_GLYPH = {"pass": "✓", "fail": "✗", "error": "!", "not_collected": "–", "no-record": "·"}
+DAY_WORD = {"pass": "passed", "fail": "failed", "error": "could not be judged", "not_collected": "not collected (a backfill cannot reconstruct past state)", "no-record": "no record"}
+
+
+def day_strip(cells: list) -> str:
+    """One cell per day. The glyph and the title carry the result, so colour is never the only signal."""
+    return '<span class="dstrip" role="img" aria-label="last 30 days">' + "".join(
+        f'<span class="dc dc-{e(c["result"])}" title="{e(c["date"])}: {e(DAY_WORD.get(c["result"], c["result"]))}">'
+        f'{e(DAY_GLYPH.get(c["result"], "?"))}</span>' for c in cells) + "</span>"
+
+
+def render_history_page(summary: dict) -> str:
+    """The daily series and its summaries per KSI, with the gap alarms. Every value is escaped."""
+    h, meta = summary["history"], summary["meta"]
+    out = [f'<p class="muted">Counting through {e(meta["last_counted_day"])} · generated {e(meta["generated_at"])} · '
+           f'{h["record_count"]} record(s) over {h["run_days"]} day(s).</p>',
+           f'<p><strong>{e(h["statement"])}</strong></p>']
+    for a in summary["alarms"]:
+        out.append(f'<div class="alarm" role="alert">ALARM {e(a["code"])}: {e(a["message"])}</div>')
+    if not summary["alarms"]:
+        out.append('<p class="muted">No alarms: the records are within the minimum cadence.</p>')
+    out.append('<p class="muted">Each record is about the UTC day it covers. Result of a day: the latest record of that day, and for a '
+               'KSI the worst of its methods. ✓ pass: complete, every target reached, no violation. ✗ fail: at least one violation. '
+               '! error: could not be judged. – not collected: a backfill cannot reconstruct past state, so that method has no result '
+               'for the day. · no record: nothing was recorded that day. None of ! – · is ever a pass.</p>')
+    out.append("<table><thead><tr><th>KSI</th><th>Last 30 days</th><th>30 days: pass / fail / error / not collected / none</th>"
+               "<th>Year, available: recorded / days</th><th>Longest gap</th></tr></thead><tbody>")
+    for ksi, ent in summary["ksis"].items():
+        s30, yr = ent["summary30"], ent["summaryYear"]
+        out.append(f'<tr><td><span class="id">{e(ksi)}</span></td><td>{day_strip(ent["strip"])}</td>'
+                   f'<td>{s30["pass_days"]} / {s30["fail_days"]} / {s30["error_days"]} / {s30["not_collected_days"]} / {s30["days_without_record"]}</td>'
+                   f'<td>{yr["recorded_days"]} / {yr["days"]} <span class="muted">(requirement: up to {yr["requirement_days"]})</span></td>'
+                   f'<td>{yr["longest_gap_days"]} d</td></tr>')
+        for m in ent["methods"]:
+            ms = m["summary30"]
+            out.append(f'<tr><td class="muted">&nbsp;&nbsp;{e(m["ar"])} <span class="muted">({e(m["method_kind"])}, {e(m["basis"])})</span></td>'
+                       f'<td>{day_strip(m["strip"])}</td>'
+                       f'<td class="muted">{ms["pass_days"]} / {ms["fail_days"]} / {ms["error_days"]} / {ms["not_collected_days"]} / {ms["days_without_record"]}</td><td></td><td></td></tr>')
+    out.append("</tbody></table>")
+    if not summary["ksis"]:
+        out.append("<p>No records yet. Run <code>make history-init</code> and then <code>make daily</code>.</p>")
+    return "".join(out)
+
+
 JS = """
 (function(){
   document.documentElement.className+=' js';
@@ -499,7 +547,7 @@ JS = """
 """
 
 
-def render(sdr: dict, coverage: dict, trace: dict = None, findings: dict = None) -> str:
+def render(sdr: dict, coverage: dict, trace: dict = None, findings: dict = None, history: dict = None) -> str:
     entries = {k["ksiId"]: k for k in sdr.get("keySecurityIndicators", [])}
     results = {kid: results_by_ar(ent) for kid, ent in entries.items()}
     s = coverage["summary"]
@@ -511,7 +559,7 @@ def render(sdr: dict, coverage: dict, trace: dict = None, findings: dict = None)
     cards = "".join(render_ksi(row, entries.get(row["id"]), ars_for_ksi.get(row["id"])) for row in coverage["ksis"])
     meta = sdr.get("metadata", {})
     nav = tab_pages = ""
-    if trace or findings:
+    if trace or findings or history:
         links = []
         if trace:
             links.append('<a href="#page-ars" data-tab="page-ars">Assessment requirements</a>')
@@ -519,6 +567,9 @@ def render(sdr: dict, coverage: dict, trace: dict = None, findings: dict = None)
         if findings:
             links.append('<a href="#page-findings" data-tab="page-findings">Findings</a>')
             tab_pages += f'<section class="page" id="page-findings">{render_findings_page(findings)}</section>'
+        if history:
+            links.append('<a href="#page-history" data-tab="page-history">History</a>')
+            tab_pages += f'<section class="page" id="page-history">{render_history_page(history)}</section>'
         links.append('<a href="#page-ksis" data-tab="page-ksis">KSIs</a>')
         nav = '<nav class="tabs">' + "".join(links) + "</nav>"
     ar_pages = "".join(render_ar_page(trace, ar) for ar in trace["ars"].values()) if trace else ""
@@ -564,6 +615,7 @@ def main() -> None:
     ap.add_argument("--coverage", default=str(ROOT / "output/coverage.json"))
     ap.add_argument("--trace", default=str(ROOT / "output/trace.json"))
     ap.add_argument("--findings", default=str(ROOT / "output/findings.json"))
+    ap.add_argument("--history", default=str(ROOT / "output/history/summary.json"))
     ap.add_argument("--out", default=str(ROOT / "output/sdr/index.html"))
     args = ap.parse_args()
     for p in (args.sdr, args.coverage):
@@ -579,7 +631,12 @@ def main() -> None:
         findings = json.loads(Path(args.findings).read_text())
     else:
         print(f"NOTE: {args.findings} not found; rendering without the Findings tab (run `make findings`).")
-    page = render(json.loads(Path(args.sdr).read_text()), json.loads(Path(args.coverage).read_text()), trace, findings)
+    history = None
+    if Path(args.history).is_file():
+        history = json.loads(Path(args.history).read_text())
+    else:
+        print(f"NOTE: {args.history} not found; rendering without the History tab (run `make history-summary`).")
+    page = render(json.loads(Path(args.sdr).read_text()), json.loads(Path(args.coverage).read_text()), trace, findings, history)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(page)

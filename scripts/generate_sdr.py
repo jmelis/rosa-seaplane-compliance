@@ -26,6 +26,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fedramp_data  # noqa: E402
+import history_summary  # noqa: E402
 import ksi_data  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -149,7 +150,7 @@ def implementation_status(state: str) -> str:
     return "Partially Implemented"
 
 
-def ksi_entry(row: dict, record: dict, freqs: dict, results: dict, automation: dict = None) -> dict:
+def ksi_entry(row: dict, record: dict, freqs: dict, results: dict, automation: dict = None, history: dict = None) -> dict:
     record = record or {}
     implemented = [m for m in row["methods"] if m["implemented"]]
 
@@ -169,6 +170,16 @@ def ksi_entry(row: dict, record: dict, freqs: dict, results: dict, automation: d
         if str(record.get(key) or "").strip():
             validation.append(record[key].strip())
 
+    evidence = [evidence_for(m, results, automation) for m in implemented]
+    line = history_summary.history_sentence(((history or {}).get("ksis") or {}).get(row["id"]))
+    if line and evidence:
+        item = {"evidenceType": "Report", "evidenceDescription": "History of daily results (30-day summary)",
+                "evidenceText": line}
+        last = (history.get("history") or {}).get("last_record_day")
+        if last:
+            item["lastUpdated"] = last
+        evidence.append(item)
+
     return {
         "ksiId": row["id"],
         "ksiImplementationStatus": implementation_status(row["state"]),
@@ -176,11 +187,12 @@ def ksi_entry(row: dict, record: dict, freqs: dict, results: dict, automation: d
         "ksiValidation": validation,
         "ksiAssessment": [],  # assessor content; never invented
         "ksiTests": [m["ar"] for m in implemented],
-        "ksiEvidence": [evidence_for(m, results, automation) for m in implemented],
+        "ksiEvidence": evidence,
     }
 
 
-def build_sdr(coverage: dict, records: dict, freqs: dict, results: dict, now: datetime, automation: dict = None) -> dict:
+def build_sdr(coverage: dict, records: dict, freqs: dict, results: dict, now: datetime, automation: dict = None,
+              history: dict = None) -> dict:
     return {
         "certificationPackageOverviewUri": CPO_PLACEHOLDER,
         "metadata": {
@@ -190,7 +202,7 @@ def build_sdr(coverage: dict, records: dict, freqs: dict, results: dict, now: da
         },
         "fedRampRequirements": [],  # out of scope for this phase
         "keySecurityIndicators": [
-            ksi_entry(row, records.get(row["id"]), freqs, results, automation) for row in coverage["ksis"]
+            ksi_entry(row, records.get(row["id"]), freqs, results, automation, history) for row in coverage["ksis"]
         ],
     }
 
@@ -220,6 +232,8 @@ def main() -> None:
     ap.add_argument("--coverage", default=str(ROOT / "output/coverage.json"))
     ap.add_argument("--scan-dir", default=str(ROOT / ".complytime/scan"))
     ap.add_argument("--evidence-dir", default=str(ROOT / "evidence/output"))
+    ap.add_argument("--history-summary", default=str(ROOT / "output/history/summary.json"),
+                    help="from `make history-summary`; adds a 30-day history line per KSI when it exists")
     ap.add_argument("--out", default=str(ROOT / "output/sdr/sdr.json"))
     args = ap.parse_args()
 
@@ -228,9 +242,11 @@ def main() -> None:
         sys.exit(f"ERROR: {cov_path} not found; run `make coverage` first.")
     coverage = json.loads(cov_path.read_text())
     ksis = fedramp_data.load_ksis()
+    hist_path = Path(args.history_summary)
+    history = json.loads(hist_path.read_text()) if hist_path.is_file() else None
     sdr = build_sdr(coverage, ksi_data.load_records(ksis), load_frequencies(ROOT / "gemara"),
                     load_results(Path(args.scan_dir)), datetime.now(timezone.utc),
-                    load_automation_summary(Path(args.evidence_dir)))
+                    load_automation_summary(Path(args.evidence_dir)), history)
 
     text = json.dumps(sdr, indent=2) + "\n"
     leaks = find_leaks(text)
