@@ -22,8 +22,13 @@ Definitions (also in the README):
   * Year summary: from the first day the subject has a record, capped at 365 days, up
     to the last counted day: the history that is AVAILABLE, stated explicitly.
   * Alarms (the rules' minimum cadence is a verification at least every 3 days,
-    VDR-TFR-MVX): STALE when the newest covered day is more than 3 days before today, GAP when
-    two consecutive covered days are more than 3 days apart.
+    VDR-TFR-MVX), in two levels. A normal run covers yesterday, so a newest covered day older
+    than that means a daily run was missed (and `make daily` fills it in on its next run):
+      WARN   STALE: the newest covered day is more than 1 day behind yesterday (a daily run
+             was missed; the 3-day cadence is not yet broken);
+      ALERT  STALE: the newest covered day is more than 3 days old;
+      ALERT  GAP: two consecutive covered days are more than 3 days apart;
+      ALERT  NO-HISTORY: nothing has been recorded.
 
     history_summary.py [--out-dir output/history] [--metrics output/sdr/ksi-metrics.json]
 """
@@ -41,6 +46,8 @@ ROOT = Path(__file__).resolve().parent.parent
 REQUIREMENT_DAYS = 365
 WINDOW_DAYS = 30
 MAX_INTERVAL_DAYS = 3
+WARN_BEHIND_DAYS = 1
+LEVELS = ("ALERT", "WARN")   # most serious first
 SEVERITY = {"fail": 3, "error": 2, "not_collected": 1, "pass": 0}
 RESULTS = ("pass", "fail", "error", "not_collected")
 METRICS_NOTE = ("FedRAMP's SDR schema has no field for historical metrics and FedRAMP staff say providers "
@@ -136,19 +143,29 @@ def strip(series: dict, end: date) -> list:
 
 
 def alarms(days: dict, records: list, today: date) -> list:
+    """Alarms with a level (WARN, ALERT), most serious first."""
     if not records:
-        return [{"code": "no-history", "message": "No run records yet: nothing has been appended to the history."}]
+        return [{"code": "no-history", "level": "ALERT",
+                 "message": "No run records yet: nothing has been appended to the history."}]
     out = []
     ds = sorted(days)
     age = (today - ds[-1]).days
+    behind = (today - timedelta(days=1) - ds[-1]).days   # days behind yesterday, the day a normal run covers
     if age > MAX_INTERVAL_DAYS:
-        out.append({"code": "stale", "message": f"The newest record covers {ds[-1]}, {age} days ago (the rules' minimum "
-                                                f"cadence is a verification at least every {MAX_INTERVAL_DAYS} days)."})
+        out.append({"code": "stale", "level": "ALERT",
+                    "message": f"The newest record covers {ds[-1]}, {age} days ago (the rules' minimum "
+                               f"cadence is a verification at least every {MAX_INTERVAL_DAYS} days)."})
+    elif behind > WARN_BEHIND_DAYS:
+        out.append({"code": "stale", "level": "WARN",
+                    "message": f"The newest record covers {ds[-1]}, {behind} days behind yesterday: a daily run was missed "
+                               f"(`make daily` fills the missing days; the {MAX_INTERVAL_DAYS}-day cadence is broken after "
+                               f"{MAX_INTERVAL_DAYS} days)."})
     worst_gap = max(((b - a).days, a, b) for a, b in zip(ds, ds[1:])) if len(ds) > 1 else None
     if worst_gap and worst_gap[0] > MAX_INTERVAL_DAYS:
-        out.append({"code": "gap", "message": f"{worst_gap[0]} days passed between the covered days {worst_gap[1]} and "
-                                              f"{worst_gap[2]} (more than {MAX_INTERVAL_DAYS})."})
-    return out
+        out.append({"code": "gap", "level": "ALERT",
+                    "message": f"{worst_gap[0]} days passed between the covered days {worst_gap[1]} and "
+                               f"{worst_gap[2]} (more than {MAX_INTERVAL_DAYS})."})
+    return sorted(out, key=lambda a: LEVELS.index(a["level"]))
 
 
 def summarize(records: list, now: datetime) -> dict:
@@ -223,7 +240,7 @@ def render_markdown(summary: dict) -> str:
            f"Generated {summary['meta']['generated_at']}; counting through {summary['meta']['last_counted_day']}.", "",
            f"**{h['statement']}** {h['record_count']} records over {h['run_days']} days.", ""]
     if summary["alarms"]:
-        out += ["## Alarms", ""] + [f"- **{a['code'].upper()}**: {a['message']}" for a in summary["alarms"]] + [""]
+        out += ["## Alarms", ""] + [f"- **{a.get('level', 'ALERT')}** **{a['code'].upper()}**: {a['message']}" for a in summary["alarms"]] + [""]
     else:
         out += ["No alarms: records are within the minimum cadence.", ""]
     out += ["Results: pass = complete, every target reached, no violation; fail = at least one violation; "
@@ -283,7 +300,7 @@ def main() -> None:
     h = summary["history"]
     print(f"{h['statement']} {h['record_count']} records, {len(summary['ksis'])} KSIs; wrote {args.out_dir}/summary.json, summary.md and {args.metrics}")
     for a in summary["alarms"]:
-        print(f"ALARM {a['code']}: {a['message']}")
+        print(f"{a.get('level', 'ALERT')} {a['code']}: {a['message']}")
 
 
 if __name__ == "__main__":

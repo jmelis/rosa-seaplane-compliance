@@ -112,7 +112,7 @@ class Windows(unittest.TestCase):
 class Alarms(unittest.TestCase):
     def test_no_records_is_an_alarm(self):
         s = hs.summarize([], NOW)
-        self.assertEqual([a["code"] for a in s["alarms"]], ["no-history"])
+        self.assertEqual([(a["level"], a["code"]) for a in s["alarms"]], [("ALERT", "no-history")])
         self.assertEqual(s["history"]["statement"], "History available: 0 days; the requirement is up to 365.")
         self.assertEqual(s["ksis"], {})
 
@@ -120,10 +120,26 @@ class Alarms(unittest.TestCase):
         recs = [dayrec(i, "pass") for i in range(0, 5)]
         self.assertEqual(hs.summarize(recs, NOW)["alarms"], [])
 
-    def test_stale_when_the_newest_covered_day_is_more_than_3_days_back(self):
-        self.assertEqual([a["code"] for a in hs.summarize([dayrec(4, "pass")], NOW)["alarms"]], ["stale"])
-        self.assertEqual(hs.summarize([dayrec(3, "pass")], NOW)["alarms"], [])
-        self.assertEqual(hs.summarize([dayrec(2, "pass")], NOW)["alarms"], [])
+    def alarms(self, days_back):
+        return [(a["level"], a["code"]) for a in hs.summarize([dayrec(days_back, "pass")], NOW)["alarms"]]
+
+    def test_levels_by_how_far_the_newest_covered_day_is_behind(self):
+        self.assertEqual(self.alarms(0), [])                      # (a record covering today, from before days were partitioned)
+        self.assertEqual(self.alarms(1), [])                      # yesterday: a normal run
+        self.assertEqual(self.alarms(2), [])                      # one day behind yesterday: not yet
+        self.assertEqual(self.alarms(3), [("WARN", "stale")])     # more than 1 day behind yesterday
+        self.assertEqual(self.alarms(4), [("ALERT", "stale")])    # more than 3 days old
+        self.assertEqual(self.alarms(30), [("ALERT", "stale")])
+
+    def test_the_warn_message_says_a_daily_run_was_missed_and_how_it_is_filled(self):
+        a = hs.summarize([dayrec(3, "pass")], NOW)["alarms"][0]
+        self.assertIn("2026-11-24", a["message"])
+        self.assertIn("make daily", a["message"])
+
+    def test_every_alarm_has_a_level(self):
+        for recs in ([], [dayrec(3, "pass")], [dayrec(20, "pass"), dayrec(10, "pass")]):
+            for a in hs.summarize(recs, NOW)["alarms"]:
+                self.assertIn(a["level"], ("WARN", "ALERT"))
 
     def test_staleness_follows_the_covered_day_not_when_the_run_happened(self):
         # made just now, but about a day 10 days ago: the series is still stale
@@ -143,6 +159,18 @@ class Alarms(unittest.TestCase):
     def test_both_alarms_can_fire(self):
         recs = [dayrec(20, "pass"), dayrec(10, "pass")]
         self.assertEqual(sorted(a["code"] for a in hs.summarize(recs, NOW)["alarms"]), ["gap", "stale"])
+
+    def test_a_gap_is_an_alert_even_when_the_series_is_current(self):
+        recs = [dayrec(10, "pass"), dayrec(5, "pass"), dayrec(1, "pass")]
+        self.assertEqual([(a["level"], a["code"]) for a in hs.summarize(recs, NOW)["alarms"]], [("ALERT", "gap")])
+
+    def test_exactly_three_days_between_covered_days_is_not_a_gap(self):
+        recs = [dayrec(7, "pass"), dayrec(4, "pass"), dayrec(1, "pass")]
+        self.assertEqual(hs.summarize(recs, NOW)["alarms"], [])
+
+    def test_alerts_come_before_warnings(self):
+        al = hs.summarize([dayrec(10, "pass"), dayrec(3, "pass")], NOW)["alarms"]
+        self.assertEqual([(a["level"], a["code"]) for a in al], [("ALERT", "gap"), ("WARN", "stale")])
 
 
 def ncrec(days_back, suffix="c0c0c0", basis=None):
@@ -228,7 +256,8 @@ class Outputs(unittest.TestCase):
 
     def test_markdown_states_the_alarm(self):
         md = hs.render_markdown(hs.summarize([dayrec(9, "pass")], NOW))
-        self.assertIn("**STALE**", md)
+        self.assertIn("**ALERT** **STALE**", md)
+        self.assertIn("**WARN** **STALE**", hs.render_markdown(hs.summarize([dayrec(3, "pass")], NOW)))
 
     def test_no_ids_or_emails_in_the_outputs(self):
         text = json.dumps(hs.summarize(self.recs, NOW)) + hs.render_markdown(hs.summarize(self.recs, NOW))

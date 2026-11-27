@@ -64,7 +64,11 @@ class Page(unittest.TestCase):
     def test_alarm_banner(self):
         stale = render_sdr_html.render_history_page(hs.summarize([make_record(NOW - timedelta(days=9), {(K, tg.tc.AR1): "pass"})], NOW))
         self.assertIn('role="alert"', stale)
-        self.assertIn("ALARM stale", stale)
+        self.assertIn("ALERT stale", stale)
+        warn = render_sdr_html.render_history_page(hs.summarize([make_record(NOW - timedelta(days=3), {(K, tg.tc.AR1): "pass"})], NOW))
+        self.assertIn("WARN stale", warn)
+        self.assertIn("alarm-warn", warn)
+        self.assertNotIn('role="alert"', warn)
         self.assertNotIn('role="alert"', self.html)
         self.assertIn("No alarms", self.html)
 
@@ -74,7 +78,7 @@ class Page(unittest.TestCase):
 
     def test_nothing_recorded_says_how_to_start(self):
         html = render_sdr_html.render_history_page(hs.summarize([], NOW))
-        self.assertIn("ALARM no-history", html)
+        self.assertIn("ALERT no-history", html)
         self.assertIn("make history-init", html)
 
     def test_hostile_text_is_escaped(self):

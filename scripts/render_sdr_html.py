@@ -390,6 +390,7 @@ code{font-family:ui-monospace,monospace;font-size:.85em;background:color-mix(in 
 .dc-pass{background:color-mix(in srgb,#1a7f37 22%,transparent)}.dc-fail{font-weight:700;border-color:#d1242f;background:color-mix(in srgb,#d1242f 22%,transparent)}
 .dc-error{font-weight:700;border-style:dashed;border-color:var(--fg)}.dc-no-record{color:var(--muted);border-style:dotted}.dc-not_collected{color:var(--muted);border-style:double;border-width:3px}
 .alarm{border:2px solid #d1242f;border-radius:8px;padding:.4rem 1rem;margin:.75rem 0;font-weight:600}
+.alarm-warn{border-color:var(--warnfg);background:var(--warn);color:var(--warnfg)}
 """
 
 FINDING_KIND_NOTE = {
@@ -481,13 +482,15 @@ def day_strip(cells: list) -> str:
 
 
 def render_history_page(summary: dict) -> str:
-    """The daily series and its summaries per KSI, with the gap alarms. Every value is escaped."""
+    """The daily series and its summaries per KSI, with the alarms (WARN: a daily run was missed; ALERT: the cadence is broken). Every value is escaped."""
     h, meta = summary["history"], summary["meta"]
     out = [f'<p class="muted">Counting through {e(meta["last_counted_day"])} · generated {e(meta["generated_at"])} · '
            f'{h["record_count"]} record(s) over {h["run_days"]} day(s).</p>',
            f'<p><strong>{e(h["statement"])}</strong></p>']
     for a in summary["alarms"]:
-        out.append(f'<div class="alarm" role="alert">ALARM {e(a["code"])}: {e(a["message"])}</div>')
+        level = a.get("level") if a.get("level") in ("WARN", "ALERT") else "ALERT"
+        out.append(f'<div class="alarm{" alarm-warn" if level == "WARN" else ""}" role="{"status" if level == "WARN" else "alert"}">'
+                   f'{level} {e(a["code"])}: {e(a["message"])}</div>')
     if not summary["alarms"]:
         out.append('<p class="muted">No alarms: the records are within the minimum cadence.</p>')
     out.append('<p class="muted">Each record is about the UTC day it covers. Result of a day: the latest record of that day, and for a '
