@@ -5,6 +5,8 @@ first being FedRAMP Class C). New controls will be added through iteration.
 
 To run the verification and diagnose a failure, jump to
 [Run the verification and understand a failure](#run-the-verification-and-understand-a-failure).
+To add or pick up a KSI, read the playbook [docs/adding-a-ksi.md](docs/adding-a-ksi.md) and the
+[backlog of remaining KSIs](docs/ksi-backlog.md).
 
 It is built on [Gemara](https://github.com/gemaraproj/gemara)'s layered model: a
 control is written once, in a certification-neutral way, and each certification is
@@ -286,6 +288,20 @@ Everything under `output/`, `evidence/output/` and `.complytime/` is gitignored:
 describes real findings, so do not publish it. The viewer has no external scripts,
 fonts or requests and HTML-escapes all data.
 
+## The AWS read-only role (created by hand, for now)
+
+The AWS checks run with a read-only IAM role, `rosa-seaplane-compliance-readonly`, which **exists today in the three
+integration accounts (central, regional, management-mc01) because we created it by hand** with
+`make aws-role ACTION=apply YES=1`. It is **not managed by infrastructure as code yet, and it does not exist in `stage`**.
+- **Where it is defined:** `config/aws/compliance-readonly-role.yaml` lists the role and every permission with the check that
+  needs it. It is meant to move into the platform's Terraform (`rosa-seaplane`): translate that file, do not re-derive it.
+  Until then it is the single source of truth, and `make aws-role` keeps the accounts in line with it.
+- **Who uses it:** the checks use only its read-only profiles (`scripts/aws_access.py` builds them). Account administrators were
+  needed only to create the role.
+- **Inspect or change it:** `make aws-role ACTION=plan` (nothing is written), `ACTION=verify` (reads work, writes are denied),
+  `ACTION=apply YES=1` and `ACTION=delete YES=1` (admin writes; edit the YAML first). Add a permission only with the check that
+  needs it, as the file's `needed-by` comments show.
+
 ## History and daily records
 
 FedRAMP's `SDR-CSX-KMT` asks for a 30-day summary, a summary up to the past year, and all
@@ -473,6 +489,8 @@ judges every application over the lookback window (30 minutes by default):
 
 ## Known gaps
 
+- The AWS read-only role was created by hand in the integration accounts and is not managed by infrastructure as code;
+  `stage` has none, so the AWS checks are unverified there (see "The AWS read-only role").
 - The health check (`RSC.CMT.CTRL03.AR02`) flags only an application that stayed unhealthy for the
   whole lookback window, so a break that began inside the window, or an outage between daily runs,
   is not seen; it depends on the platform's metrics pipeline and on the metrics gateway's access policy.
