@@ -3,7 +3,8 @@
 
 One record per run, with one entry per KSI per automated method (a method is an
 assessment requirement, AR). A record is about ONE UTC day (`covers_date`, the half-open
-interval [D 00:00:00Z, D+1 00:00:00Z)), which is not when the run happened. It is what a day's evidence looks like in the series that
+interval [D 00:00:00Z, D+1 00:00:00Z), by default yesterday), which is not when the run
+happened. It is what a day's evidence looks like in the series that
 the Class C rules ask for (SDR-CSX-KMT: daily metric data including the status of
 persistent validation, up to a year). The record holds results and counts, never the
 raw evidence, no account IDs or ARNs, no emails, no PR or event payloads. The
@@ -28,19 +29,24 @@ a `state` method judges the present at collection time (configuration, existing 
 and records `collected_at`. An event method may declare `state_rules`, rules that read the
 present: a backfill ignores them.
 
-DATE: until the collectors take a date (the next step), a run covers the UTC day it is run
-on, with the windows the collectors really used (recorded per method); an explicit DATE for a
-past day is refused rather than mislabelling a run.
+DATE: the day the run covers (default yesterday, UTC; see evidence/lib/day_window.py). Yesterday
+is a normal run; any earlier day is a BACKFILL (backfill=true: its state methods are
+`not_collected`). Today, a future day, a malformed date and a day older than 90 days are
+refused. The evidence of every event method must say it covers exactly that day (its
+`covers_date` and `window`): evidence collected for another day is refused, never relabelled.
 
 Built from existing outputs only (output/coverage.json, output/trace.json,
 output/findings.json, the evidence manifests); it refuses to run when they are missing,
 older than the evidence they describe, or when that evidence is too old to call a run.
 
     build_record.py [--date YYYY-MM-DD] [--check-date-only] [--no-append] [--max-evidence-age-hours N]
+                    [--coverage F] [--trace F] [--findings F] [--evidence-dir D]   (a backfill points these
+                                                                                   at its own working copies)
 """
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -50,7 +56,9 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "evidence/lib"))
 
+import day_window  # noqa: E402
 import history  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -117,22 +125,19 @@ def load_basis(path: Path = BASIS_FILE) -> dict:
     return out
 
 
-def resolve_covers_date(requested, now: datetime):
-    """(covers_date, backfill) for a run. Until the collectors take a date, a run covers the day
-    it runs on; a past date is refused instead of mislabelling a run made with today's window."""
-    today = now.astimezone(timezone.utc).date()
-    if requested in (None, ""):
-        return today.isoformat(), False
+def resolve_covers_date(requested, now: datetime, settle: bool = False, settle_minutes: int = None,
+                        allow_early: bool = False):
+    """(covers_date, backfill) for a run: the requested UTC day, default yesterday. Refuses a day that
+    is not complete (today, the future), is malformed, or is older than the 90 days CloudTrail keeps.
+    `settle` also refuses a day that ended less than the settle delay ago (a check made before the
+    collection; a record is built from evidence that has already been collected)."""
     try:
-        day = date.fromisoformat(requested)
-    except ValueError:
-        raise RecordError(f"DATE must be YYYY-MM-DD, not {requested!r}") from None
-    if day == today:
-        return day.isoformat(), False
-    if day > today:
-        raise RecordError(f"DATE {requested} is in the future")
-    raise RecordError(f"DATE {requested} is a past day: a backfill arrives with the next step, when the collectors take a "
-                      "date. Refusing to label a run made with the current window as that day.")
+        day = day_window.resolve(requested, now,
+                                 day_window.DEFAULT_SETTLE_MINUTES if settle_minutes is None else settle_minutes,
+                                 allow_early=allow_early or not settle)
+    except day_window.DayError as e:
+        raise RecordError(str(e)) from None
+    return day["covers_date"], day["backfill"]
 
 
 def collected_at(ar_dir: Path):
@@ -169,31 +174,39 @@ def evidence_files(ar_dir: Path) -> list:
 
 
 def ar_window(ar_dir: Path):
-    """The period an AR's evidence covers, when it has one: {start, end} from each file's
-    generated_at and its window (days or minutes). None for state checks."""
+    """The period an event method's evidence covers: {start, end} from the `window` every event
+    evidence file records (the earliest start, the latest end). None when it records none (a
+    state method)."""
     starts, ends = [], []
     for name, doc in evidence_files(ar_dir):
         if name == "manifest.json" or not isinstance(doc, dict):
             continue
-        coll = doc.get("collection") if isinstance(doc.get("collection"), dict) else {}
-        span = None
-        for key, unit in (("window_days", "days"), ("window_hours", "hours"), ("window_minutes", "minutes")):
-            val = doc.get(key, coll.get(key))
-            if isinstance(val, (int, float)) and val > 0:
-                span = timedelta(**{unit: val})
-                break
-        gen = doc.get("generated_at") or coll.get("generated_at")
-        if span is None or not gen:
-            continue
-        try:
-            end = parse_ts(gen)
-        except ValueError:
-            continue
-        starts.append(end - span)
-        ends.append(end)
+        w = doc.get("window")
+        if isinstance(w, dict) and isinstance(w.get("start"), str) and isinstance(w.get("end"), str):
+            starts.append(w["start"])
+            ends.append(w["end"])
     if not starts:
         return None
-    return {"start": fmt_ts(min(starts)), "end": fmt_ts(max(ends))}
+    return {"start": min(starts), "end": max(ends)}
+
+
+def check_covers(ar: str, ar_dir: Path, covers_date: str) -> None:
+    """Every evidence file of an event method must say it covers exactly the record's day: its
+    `covers_date` and its half-open `window`. Evidence for another day (or from a collector that
+    takes no date) is refused, never relabelled as this day's."""
+    want = day_window.day_for(covers_date)
+    expected = {"start": want["start"], "end": want["end"]}
+    for name, doc in evidence_files(ar_dir):
+        if doc is None:
+            continue  # unparseable: reported as incomplete evidence
+        if name == "manifest.json":
+            if "covers_date" in doc and doc["covers_date"] != covers_date:
+                raise RecordError(f"{ar}: the evidence manifest covers {doc['covers_date']}, not {covers_date}: "
+                                  "refusing to record it as that day")
+            continue
+        if doc.get("covers_date") != covers_date or doc.get("window") != expected:
+            raise RecordError(f"{ar}: {name} covers {doc.get('covers_date') or 'no stated day'}, not {covers_date}: "
+                              "refusing to record it as that day (collect it with RSC_DATE, or `make daily DATE=...`)")
 
 
 def evidence_incomplete(ar_dir: Path) -> bool:
@@ -254,7 +267,8 @@ def method_outcome(violations: int, incomplete: int, flags: list) -> str:
     return "pass"
 
 
-def build_methods(coverage: dict, trace: dict, findings: dict, evidence_dir: Path, basis: dict, backfill: bool = False) -> list:
+def build_methods(coverage: dict, trace: dict, findings: dict, evidence_dir: Path, basis: dict, backfill: bool = False,
+                  covers_date: str = None) -> list:
     methods = []
     for ksi in sorted(coverage["ksis"], key=lambda k: k["id"]):
         for m in sorted(ksi["methods"], key=lambda m: m["ar"]):
@@ -281,6 +295,8 @@ def build_methods(coverage: dict, trace: dict, findings: dict, evidence_dir: Pat
                 slot["violation" if f["kind"] == "violation" else "incomplete"] += 1
                 slot["rules"][f["rule"]] = slot["rules"].get(f["rule"], 0) + 1
             ar_dir = evidence_dir / ar
+            if info["basis"] == "event" and covers_date:
+                check_covers(ar, ar_dir, covers_date)
             scope = (trace.get("scope") or {}).get(ar) or {}
             expected = len(scope.get("expected") or [])
             reached = sum(1 for t in scope.get("targets") or [] if t.get("status") == "reached")
@@ -369,9 +385,10 @@ def build_record(coverage: dict, trace: dict, findings: dict, evidence_dir: Path
                  "output/trace.json": (trace.get("meta") or {}).get("generated_at"),
                  "output/findings.json": (findings.get("meta") or {}).get("generated_at")},
                 evidence_dir, now, max_age_hours)
-    covers_date = covers_date or now.astimezone(timezone.utc).date().isoformat()
-    if date.fromisoformat(covers_date) > now.astimezone(timezone.utc).date():
-        raise RecordError(f"covers_date {covers_date} is in the future")
+    covers_date, resolved_backfill = resolve_covers_date(covers_date, now)
+    if bool(backfill) != resolved_backfill:
+        raise RecordError(f"{covers_date} is {'a past day' if resolved_backfill else 'yesterday'}, so this record "
+                          f"{'is' if resolved_backfill else 'is not'} a backfill; got backfill={bool(backfill)}")
     basis = load_basis() if basis is None else basis
     ev = findings["meta"]["evidence_generated_at"]
     finished = max(parse_ts(g) for g in (coverage["generated_at"], trace["meta"]["generated_at"], findings["meta"]["generated_at"]))
@@ -387,7 +404,7 @@ def build_record(coverage: dict, trace: dict, findings: dict, evidence_dir: Path
         "pipeline": git,
         "policy_sha256": policy_hash(root),
         "tools": tool_versions(root),
-        "methods": build_methods(coverage, trace, findings, evidence_dir, basis, backfill),
+        "methods": build_methods(coverage, trace, findings, evidence_dir, basis, backfill, covers_date),
     }
     assert_clean(record)
     check_record(record)
@@ -401,15 +418,19 @@ def main() -> None:
     ap.add_argument("--findings", default=str(ROOT / "output/findings.json"))
     ap.add_argument("--evidence-dir", default=str(ROOT / "evidence/output"))
     ap.add_argument("--max-evidence-age-hours", type=float, default=DEFAULT_MAX_EVIDENCE_AGE_HOURS)
-    ap.add_argument("--date", default=None, help="UTC day the record covers (default: the day of the run; a past day is refused for now)")
-    ap.add_argument("--check-date-only", action="store_true", help="only validate --date and exit (used by `make daily` before the long run)")
+    ap.add_argument("--date", default=None, help="UTC day the record covers (default: yesterday; an earlier day is a backfill)")
+    ap.add_argument("--check-date-only", action="store_true",
+                    help="only validate --date, including the settle delay of a collection, and exit")
     ap.add_argument("--no-append", action="store_true", help="build and print the record, do not append it")
     args = ap.parse_args()
     try:
         now = datetime.now(timezone.utc)
-        covers_date, backfill = resolve_covers_date(args.date, now)
+        covers_date, backfill = resolve_covers_date(
+            args.date, now, settle=args.check_date_only,
+            settle_minutes=int(os.environ.get("RSC_SETTLE_MINUTES") or day_window.DEFAULT_SETTLE_MINUTES),
+            allow_early=os.environ.get("RSC_ALLOW_EARLY") == "1")
         if args.check_date_only:
-            print(f"A record made now would cover {covers_date}.")
+            print(f"The run covers {covers_date} ({'a backfill' if backfill else 'a normal run'}).")
             return
         docs = {}
         for name in ("coverage", "trace", "findings"):

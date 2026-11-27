@@ -7,9 +7,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "evidence/lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import build_record as br  # noqa: E402
+import day_window  # noqa: E402
 import history  # noqa: E402
 from history_fakes import ts, utc  # noqa: E402
 
@@ -55,12 +57,19 @@ class Fixture(unittest.TestCase):
         (self.root / "opa/d/policy").mkdir(parents=True)
         (self.root / "opa/d/policy/x.rego").write_text("package x\n")
 
+    day = "2026-11-26"   # the day the evidence of an event method covers (yesterday, for NOW)
+
     def write_evidence(self, ar, files=None, at=EVIDENCE_AT):
+        """Evidence of an AR. An event method's files say which day they cover, as the collectors do."""
+        event = BASIS.get(ar, {}).get("basis") == "event"
+        w = day_window.day_for(self.day)
+        stated = {"covers_date": self.day, "window": {"start": w["start"], "end": w["end"]}} if event else {}
         d = self.ev / ar
         d.mkdir(parents=True, exist_ok=True)
-        (d / "manifest.json").write_text(json.dumps({"ar": ar, "generated_at": ts(at), "targets": []}))
+        (d / "manifest.json").write_text(json.dumps({"ar": ar, "generated_at": ts(at), "targets": [],
+                                                     **({"covers_date": self.day} if event else {})}))
         for name, doc in (files if files is not None else {"t0.json": {"generated_at": ts(at)}}).items():
-            (d / name).write_text(json.dumps(doc))
+            (d / name).write_text(json.dumps({**stated, **doc}))
 
     def build(self, cov, tr, fi, **kw):
         kw.setdefault("basis", BASIS)
@@ -148,7 +157,7 @@ class Building(Fixture):
         self.write_evidence(AR1)
         rec = self.build(coverage({"KSI-AAA-BBB": [(AR1, "Intent", True)]}), trace({AR1: scope(["reached"])}), findings([]))
         self.assertEqual(rec["run_id"], "20261127T120000Z-abcdef")
-        self.assertEqual((rec["covers_date"], rec["backfill"]), ("2026-11-27", False))
+        self.assertEqual((rec["covers_date"], rec["backfill"]), ("2026-11-26", False))
         self.assertEqual((rec["recorded_at"], rec["environment"], rec["pipeline"]), (ts(NOW), "integration", GIT))
         self.assertEqual(rec["tools"], {"prowler": "9.9.9"})
         self.assertEqual(rec["started_at"], ts(EVIDENCE_AT - timedelta(minutes=3)))
@@ -206,26 +215,75 @@ class Hashes(Fixture):
 
 
 class Windows(Fixture):
-    def test_window_from_days(self):
-        self.write_evidence(AR1, {"t0.json": {"generated_at": ts(EVIDENCE_AT), "window_days": 2}})
-        w = br.ar_window(self.ev / AR1)
-        self.assertEqual(w, {"start": ts(EVIDENCE_AT - timedelta(days=2)), "end": ts(EVIDENCE_AT)})
-
-    def test_window_from_collection_minutes_and_days(self):
-        self.write_evidence(AR1, {"t0.json": {"generated_at": ts(EVIDENCE_AT), "collection": {"window_minutes": 30}}})
-        self.assertEqual(br.ar_window(self.ev / AR1)["start"], ts(EVIDENCE_AT - timedelta(minutes=30)))
-        self.write_evidence(AR2, {"t0.json": {"generated_at": ts(EVIDENCE_AT), "collection": {"window_days": 3}}})
-        self.assertEqual(br.ar_window(self.ev / AR2)["start"], ts(EVIDENCE_AT - timedelta(days=3)))
+    def test_an_event_methods_window_is_the_day_its_evidence_states(self):
+        self.write_evidence(AR1)
+        self.assertEqual(br.ar_window(self.ev / AR1), {"start": "2026-11-26T00:00:00Z", "end": "2026-11-27T00:00:00Z"})
 
     def test_state_checks_have_no_window(self):
-        self.write_evidence(AR1)
-        self.assertIsNone(br.ar_window(self.ev / AR1))
+        self.write_evidence(AR3)
+        self.assertIsNone(br.ar_window(self.ev / AR3))
 
-    def test_window_spans_all_targets(self):
-        self.write_evidence(AR1, {"a.json": {"generated_at": ts(EVIDENCE_AT), "window_days": 2},
-                                  "b.json": {"generated_at": ts(EVIDENCE_AT + timedelta(minutes=5)), "window_days": 2}})
-        w = br.ar_window(self.ev / AR1)
-        self.assertEqual((w["start"], w["end"]), (ts(EVIDENCE_AT - timedelta(days=2)), ts(EVIDENCE_AT + timedelta(minutes=5))))
+    def test_the_window_spans_all_targets(self):
+        self.write_evidence(AR1, {"a.json": {"window": {"start": "2026-11-26T00:00:00Z", "end": "2026-11-27T00:00:00Z"}},
+                                  "b.json": {"window": {"start": "2026-11-26T00:00:00Z", "end": "2026-11-27T00:00:00Z"}}})
+        self.assertEqual(br.ar_window(self.ev / AR1), {"start": "2026-11-26T00:00:00Z", "end": "2026-11-27T00:00:00Z"})
+
+
+class MismatchedDays(Fixture):
+    """Evidence collected for one day is never recorded as another's."""
+
+    def attempt(self, covers_date, backfill=False):
+        cov = coverage({"KSI-AAA-BBB": [(AR1, "Intent", True)]})
+        return self.build(cov, trace({AR1: scope(["reached"])}), findings([]), covers_date=covers_date, backfill=backfill)
+
+    def test_matching_evidence_is_recorded(self):
+        self.write_evidence(AR1)
+        self.assertEqual(self.attempt("2026-11-26")["methods"][0]["result"], "pass")
+
+    def test_evidence_of_another_day_is_refused(self):
+        self.write_evidence(AR1)
+        with self.assertRaises(br.RecordError) as cm:
+            self.attempt("2026-11-25", backfill=True)
+        self.assertIn("not 2026-11-25", str(cm.exception))
+
+    def test_a_window_that_is_not_the_day_is_refused(self):
+        self.write_evidence(AR1, {"t0.json": {"generated_at": ts(EVIDENCE_AT), "window": {"start": "2026-11-26T00:00:00Z", "end": "2026-11-26T12:00:00Z"}}})
+        with self.assertRaises(br.RecordError):
+            self.attempt("2026-11-26")
+
+    def test_evidence_that_states_no_day_is_refused(self):
+        self.write_evidence(AR1)
+        (self.ev / AR1 / "t0.json").write_text(json.dumps({"generated_at": ts(EVIDENCE_AT)}))
+        with self.assertRaises(br.RecordError) as cm:
+            self.attempt("2026-11-26")
+        self.assertIn("no stated day", str(cm.exception))
+
+    def test_a_manifest_for_another_day_is_refused(self):
+        self.write_evidence(AR1)
+        (self.ev / AR1 / "manifest.json").write_text(json.dumps({"ar": AR1, "generated_at": ts(EVIDENCE_AT), "targets": [], "covers_date": "2026-11-20"}))
+        with self.assertRaises(br.RecordError):
+            self.attempt("2026-11-26")
+
+    def test_one_stray_file_is_enough_to_refuse(self):
+        self.write_evidence(AR1, {"a.json": {"generated_at": ts(EVIDENCE_AT)}, "b.json": {"generated_at": ts(EVIDENCE_AT), "covers_date": "2026-11-01"}})
+        with self.assertRaises(br.RecordError):
+            self.attempt("2026-11-26")
+
+    def test_state_evidence_states_no_day_and_is_not_checked(self):
+        self.write_evidence(AR3)
+        cov = coverage({"KSI-AAA-BBB": [(AR3, "Behavioral", True)]})
+        self.assertEqual(self.build(cov, trace({AR3: scope(["reached"])}), findings([]))["methods"][0]["result"], "pass")
+
+    def test_the_backfill_flag_must_match_the_day(self):
+        self.write_evidence(AR1)
+        with self.assertRaises(br.RecordError) as cm:
+            self.attempt("2026-11-26", backfill=True)
+        self.assertIn("yesterday", str(cm.exception))
+        self.day = "2026-11-20"
+        self.write_evidence(AR1)
+        with self.assertRaises(br.RecordError) as cm:
+            self.attempt("2026-11-20", backfill=False)
+        self.assertIn("past day", str(cm.exception))
 
 
 class Freshness(Fixture):
@@ -307,7 +365,8 @@ class Privacy(Fixture):
 
 class StateAndEvent(Fixture):
     def two(self, rows=(), **kw):
-        self.write_evidence(AR1, {"t0.json": {"generated_at": ts(EVIDENCE_AT), "window_days": 2}})
+        self.day = kw.get("covers_date", self.day)
+        self.write_evidence(AR1, {"t0.json": {"generated_at": ts(EVIDENCE_AT)}})
         self.write_evidence(AR3, {"t0.json": {"generated_at": ts(EVIDENCE_AT - timedelta(minutes=2))},
                                   "t1.json": {"generated_at": ts(EVIDENCE_AT - timedelta(minutes=1))}},
                              at=EVIDENCE_AT - timedelta(minutes=3))
@@ -321,7 +380,7 @@ class StateAndEvent(Fixture):
 
     def test_an_event_method_records_its_window_and_no_collection_time(self):
         m = self.two()[AR1]
-        self.assertEqual(m["window"], {"start": ts(EVIDENCE_AT - timedelta(days=2)), "end": ts(EVIDENCE_AT)})
+        self.assertEqual(m["window"], {"start": "2026-11-26T00:00:00Z", "end": "2026-11-27T00:00:00Z"})
         self.assertIsNone(m["collected_at"])
 
     def test_a_state_method_records_when_it_looked_and_no_window(self):
@@ -357,6 +416,10 @@ class Backfill(StateAndEvent):
         self.assertEqual((m["violations"], m["incomplete"], m["targets_expected"], m["targets_reached"]), (0, 0, 0, 0))
         self.assertEqual((m["window"], m["collected_at"], m["evidence_sha256"], m["rules_failed"]), (None, None, None, []))
 
+    def test_a_past_days_event_window_is_that_day_not_the_run(self):
+        m = self.two(covers_date="2026-11-20", backfill=True)[AR1]
+        self.assertEqual(m["window"], {"start": "2026-11-20T00:00:00Z", "end": "2026-11-21T00:00:00Z"})
+
     def test_todays_state_is_never_used_for_a_past_day_even_if_it_failed(self):
         self.write_evidence(AR3)
         cov = coverage({"KSI-AAA-BBB": [(AR3, "Behavioral", True)]})
@@ -369,6 +432,7 @@ class Backfill(StateAndEvent):
         self.assertEqual((by[AR1]["result"], by[AR1]["violations"]), ("fail", 1))
 
     def test_rules_that_read_the_present_are_ignored_for_an_event_method_in_a_backfill(self):
+        self.day = "2026-11-20"
         self.write_evidence(AR2)
         cov = coverage({"KSI-AAA-BBB": [(AR2, "Behavioral", True)]})
         rows = [(AR2, "violation", "s.head"), (AR2, "violation", "e.merge")]
@@ -379,6 +443,7 @@ class Backfill(StateAndEvent):
         self.assertEqual((m["result"], m["violations"]), ("pass", 0))
 
     def test_a_backfill_record_validates_and_says_so(self):
+        self.day = "2026-11-20"
         self.write_evidence(AR1)
         self.write_evidence(AR3)
         cov = coverage({"KSI-AAA-BBB": [(AR1, "Intent", True), (AR3, "Behavioral", True)]})
@@ -404,7 +469,8 @@ class SchemaFlavours(Fixture):
     """The three kinds of record: a normal day, a backfilled day, and a rerun of a day."""
 
     def base(self, **kw):
-        self.write_evidence(AR1, {"t0.json": {"generated_at": ts(EVIDENCE_AT), "window_days": 2}})
+        self.day = kw.get("covers_date", self.day)
+        self.write_evidence(AR1, {"t0.json": {"generated_at": ts(EVIDENCE_AT)}})
         self.write_evidence(AR3)
         cov = coverage({"KSI-AAA-BBB": [(AR1, "Intent", True), (AR3, "Behavioral", True)]})
         return self.build(cov, trace({AR1: scope(["reached"]), AR3: scope(["reached"])}), findings([]), **kw)
@@ -433,9 +499,11 @@ class SchemaFlavours(Fixture):
         store.put_record(b)
         self.assertEqual(len(store.records(validator=br.check_record)), 2)
 
-    def test_a_record_cannot_cover_a_day_after_it_was_made(self):
-        with self.assertRaises(br.RecordError):
-            self.base(covers_date="2026-11-28")
+    def test_a_record_cannot_cover_a_day_that_is_not_complete(self):
+        for bad in ("2026-11-27", "2026-11-28"):
+            with self.assertRaises(br.RecordError, msg=bad):
+                self.base(covers_date=bad)
+        self.day = "2026-11-26"
         rec = self.base()
         rec["covers_date"] = "2026-11-28"
         with self.assertRaises(br.RecordError):
@@ -443,28 +511,39 @@ class SchemaFlavours(Fixture):
 
 
 class Dates(unittest.TestCase):
-    def test_default_is_the_day_of_the_run(self):
-        self.assertEqual(br.resolve_covers_date(None, NOW), ("2026-11-27", False))
-        self.assertEqual(br.resolve_covers_date("", NOW), ("2026-11-27", False))
+    def test_default_is_yesterday_a_normal_run(self):
+        self.assertEqual(br.resolve_covers_date(None, NOW), ("2026-11-26", False))
+        self.assertEqual(br.resolve_covers_date("", NOW), ("2026-11-26", False))
 
-    def test_today_is_accepted(self):
-        self.assertEqual(br.resolve_covers_date("2026-11-27", NOW), ("2026-11-27", False))
+    def test_yesterday_named_is_a_normal_run_and_any_earlier_day_a_backfill(self):
+        self.assertEqual(br.resolve_covers_date("2026-11-26", NOW), ("2026-11-26", False))
+        self.assertEqual(br.resolve_covers_date("2026-11-25", NOW), ("2026-11-25", True))
+        self.assertEqual(br.resolve_covers_date("2026-09-01", NOW), ("2026-09-01", True))
 
-    def test_a_past_day_is_refused_with_the_reason(self):
-        with self.assertRaises(br.RecordError) as cm:
-            br.resolve_covers_date("2026-11-26", NOW)
-        self.assertIn("backfill arrives", str(cm.exception))
-        self.assertIn("next step", str(cm.exception))
+    def test_today_and_the_future_are_refused_as_not_complete(self):
+        for bad in ("2026-11-27", "2026-11-28"):
+            with self.assertRaises(br.RecordError, msg=bad) as cm:
+                br.resolve_covers_date(bad, NOW)
+            self.assertIn("not a complete day", str(cm.exception))
 
-    def test_a_future_day_and_junk_are_refused(self):
-        for bad in ("2026-11-28", "tomorrow", "2026-13-01", "27/11/2026"):
+    def test_junk_and_the_ninety_day_limit_are_refused(self):
+        for bad in ("tomorrow", "2026-13-01", "27/11/2026", "2026-08-01"):
             with self.assertRaises(br.RecordError, msg=bad):
                 br.resolve_covers_date(bad, NOW)
 
     def test_the_day_is_the_utc_day(self):
         late = utc(2026, 11, 27, 23, 59)
-        self.assertEqual(br.resolve_covers_date(None, late), ("2026-11-27", False))
-        self.assertEqual(br.resolve_covers_date(None, late + timedelta(minutes=2))[0], "2026-11-28")
+        self.assertEqual(br.resolve_covers_date(None, late), ("2026-11-26", False))
+        self.assertEqual(br.resolve_covers_date(None, late + timedelta(minutes=2))[0], "2026-11-27")
+
+    def test_a_check_before_collecting_applies_the_settle_delay_a_record_does_not(self):
+        early = utc(2026, 11, 27, 0, 30)
+        self.assertEqual(br.resolve_covers_date(None, early), ("2026-11-26", False))          # evidence already collected
+        with self.assertRaises(br.RecordError) as cm:
+            br.resolve_covers_date(None, early, settle=True)
+        self.assertIn("RSC_ALLOW_EARLY", str(cm.exception))
+        self.assertEqual(br.resolve_covers_date(None, early, settle=True, allow_early=True), ("2026-11-26", False))
+        self.assertEqual(br.resolve_covers_date(None, early, settle=True, settle_minutes=30), ("2026-11-26", False))
 
 
 class BasisFile(unittest.TestCase):
